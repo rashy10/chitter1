@@ -1,0 +1,49 @@
+:root{
+  --bg: #0f172a;
+  --card: #0b1220;
+  --muted: #94a3b8;
+  --accent: #1d4ed8;
+  --white: #e6eef8;
+}
+body{
+  margin:0;
+  font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+  background: linear-gradient(180deg, #071028 0%, #071b2b 100%);
+  color: var(--white);
+}
+.nav{
+  display:flex;
+  gap:1rem;
+  padding:1rem;
+  background: rgba(255,255,255,0.02);
+}
+.container{
+  max-width:900px;
+  margin:1.25rem auto;
+  padding:1rem;
+  background: rgba(255,255,255,0.02);
+  border-radius:8px;
+}
+
+/* Full-width modifier used for Home page */
+.container.container--full{
+  max-width: 100%;
+  margin: 0;
+  padding: 1.25rem;
+  border-radius: 0;
+  background: transparent;
+}
+.auth-card{ 
+  max-width:420px;
+  padding:1rem;
+  background: rgba(255,255,255,0.02);
+  border-radius:8px;
+}
+label{display:block;margin-top:8px;color:var(--muted);font-size:0.9rem}
+input{display:block;width:100%;padding:8px;margin-top:6px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:var(--white)}
+button{margin-top:12px;padding:8px 12px;border-radius:6px;background:var(--accent);border:none;color:white}
+.feed{list-style:none;padding:0}
+.post{padding:8px 12px;border-bottom:1px solid rgba(255,255,255,0.03)}
+.post-user{font-weight:600}
+.error{color:#fca5a5;margin-top:8px}
+.info{color:#bbf7d0;margin-top:8px}
