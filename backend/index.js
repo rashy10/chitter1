@@ -336,6 +336,20 @@ app.post('/auth/logout', async (req, res) => {
     }
 })
 
+// app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
+//     const { id } = req.params;
+//     try {
+//         const post = await db.collection('posts').findOne({ id });
+//         if (!post) {
+//             return res.status(404).json({ message: 'Post not found' });
+//         }
+//         return res.status(200).json(post);
+//     } catch (err) {
+//         console.error('Error fetching post', err);
+//         return res.status(500).json({ message: 'Failed to fetch post' });
+//     }
+// });
+
 
 
 
@@ -380,8 +394,51 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
 
 
 
+app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    try {
+        const post = await db.collection('posts').findOne({ id });
+        if (!post) {
+            return res.status(404).json({ message: 'Post not found' });
+        }
+        const comments = await db.collection('comments').find({ tweetId: id }).sort({ createdAt: -1 }).toArray();
+        const data = {post : post, comments : comments};
+        console.log(data);
 
+        return res.status(200).json(data);
+    } catch (err) {
+        console.error('Error fetching post', err);
+        return res.status(500).json({ message: 'Failed to fetch post' });
+    }
+});
 
+app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const { comment } = req.body;
+    if (!comment) {
+        return res.status(400).json({ message: 'Comment text required' });
+    }
+    try {
+        const post = await db.collection('posts').findOne({ id });
+        if (!post) {
+            return res.status(404).json({ message: 'Post not found' });
+        }
+        const newComment = {
+            
+            id: uuidv4(),
+            tweetId: id,
+            userId: req.user.id,
+            username: req.user.username,
+            comment,
+            createdAt: new Date(),
+        };
+        await db.collection('comments').insertOne(newComment);
+        return res.status(201).json({ message: 'Comment added' });
+    } catch (err) {
+        console.error('Error adding comment', err);
+        return res.status(500).json({ message: 'Failed to add comment' });
+    }
+});
 
 connectDB().then(() => {
   app.listen(PORT, () => {
