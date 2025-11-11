@@ -9,7 +9,8 @@ const bcrypt = require('bcrypt')
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
 const nodemailer = require('nodemailer')
-
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 dotenv.config();
 
@@ -33,10 +34,22 @@ function parseCookies(cookieHeader) {
     return obj
 }
 
+const BUCKET_NAME = process.env.AWS_BUCKET_NAME;
+const BUCKET_REGION = process.env.AWS_BUCKET_REGION;
+const ACCESS_KEY = process.env.AWS_ACCESS_KEY_ID;
+const SECRET_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 
 const JWT_SECRET = process.env.JWT_SECRET 
 const REFRESH_TOKEN_DAYS = parseInt(process.env.REFRESH_TOKEN_DAYS || '7', 10)
 const REFRESH_TOKEN_TTL = REFRESH_TOKEN_DAYS * 24 * 60 * 60 * 1000 // ms
+
+const s3Client = new S3Client({
+  region: BUCKET_REGION,
+  credentials: {
+    accessKeyId: ACCESS_KEY,
+    secretAccessKey: SECRET_KEY,
+  },
+});
 
 // --- Authentication middleware (verifies access JWT in Authorization header)
 function authenticateToken(req, res, next) {
@@ -57,6 +70,7 @@ function authenticateToken(req, res, next) {
 
 
 
+
 let db; // we'll store our database reference here
 
 async function connectDB() {
@@ -65,6 +79,20 @@ async function connectDB() {
     await client.connect();
     db = client.db(process.env.DB_NAME); // connect to the right DB
     console.log("✅ MongoDB connected");
+    // ensure unique index on likes to prevent duplicate (tweetId, userId) entries
+    try {
+      await db.collection('likes').createIndex({ tweetId: 1, userId: 1 }, { unique: true, name: 'uniq_tweet_user' })
+      console.log('✅ Ensured unique index on likes(tweetId, userId)')
+    } catch (idxErr) {
+      console.warn('Could not create likes index at startup', idxErr)
+    }
+    // ensure bookmarks collection has a unique (userId, postId) index
+    try {
+      await db.collection('bookmarks').createIndex({ userId: 1, postId: 1 }, { unique: true, name: 'uniq_user_post_bookmark' })
+      console.log('✅ Ensured unique index on bookmarks(userId, postId)')
+    } catch (idxErr) {
+      console.warn('Could not create bookmarks index at startup', idxErr)
+    }
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err);
     process.exit(1);
@@ -72,7 +100,53 @@ async function connectDB() {
 }
 
 
+app.post('/api/generate-upload-url', authenticateToken,async (req, res) => {
+  try {
+    const { fileName, fileType } = req.body;
 
+    // --- Basic File Validation ---
+    // You should add more robust validation here
+    const allowedFileTypes = ['image/jpeg', 'image/png', 'image/gif', 'video/mp4', 'video/quicktime'];
+    if (!allowedFileTypes.includes(fileType)) {
+      return res.status(400).json({ error: 'Invalid file type' });
+    }
+
+    // --- Generate a unique file key for S3 ---
+    // We use crypto.randomBytes to create a unique prefix
+    const randomBytes = crypto.randomBytes(16).toString('hex');
+    const fileKey = `${randomBytes}-${fileName}`;
+
+    // --- Create the PutObjectCommand ---
+    // This command prepares the upload parameters
+    const command = new PutObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: fileKey,
+      ContentType: fileType,
+      // ACL: 'public-read', // This is needed if your bucket policy doesn't force public-read
+    });
+
+    // --- Generate the presigned URL ---
+    // This URL will be valid for a limited time (e.g., 60 seconds)
+    const uploadUrl = await getSignedUrl(s3Client, command, {
+      expiresIn: 60, // 60 seconds
+    });
+
+    // --- Generate the final public URL ---
+    // This is the URL you will store in MongoDB
+    const publicUrl = `https://s3.${BUCKET_REGION}.amazonaws.com/${BUCKET_NAME}/${fileKey}`;
+    // Note: A more robust way is `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${fileKey}`
+
+    // --- Send the URLs back to the React app ---
+    res.status(200).json({
+      uploadUrl: uploadUrl,
+      publicUrl: publicUrl, // The URL to store in your database
+    });
+
+  } catch (error) {
+    console.error('Error generating presigned URL:', error);
+    res.status(500).json({ error: 'Error generating upload URL' });
+  }
+});
 
 app.post("/auth/register", async (req, res) => {
   const { email, username, password } = req.body;
@@ -231,7 +305,8 @@ app.post('/auth/refresh', async (req, res) => {
 
         const accessToken = jwt.sign({ sub: user.id, roles: user.roles ,username: user.username}, JWT_SECRET, { expiresIn: '10m' })
         res.setHeader('Set-Cookie', `refreshToken=${encodeURIComponent(newToken)}; HttpOnly; Path=/; Max-Age=${Math.floor(REFRESH_TOKEN_TTL/1000)}${process.env.NODE_ENV==='production'?'; Secure':''}; SameSite=Lax`)
-  return res.status(200).json({ accessToken, user: { id: user.id, username: user.username, email: user.email, roles: user.roles } })
+  // include following so client can persist follow state
+  return res.status(200).json({ accessToken, user: { id: user.id, username: user.username, email: user.email, roles: user.roles, following: user.following || [] } })
     } catch (err) {
         console.error('Refresh error', err)
         return res.status(500).json({ message: 'Refresh failed' })
@@ -313,7 +388,8 @@ app.post("/auth/login",async (req, res) => {
   
       res.setHeader('Set-Cookie', `refreshToken=${encodeURIComponent(refreshToken)}; HttpOnly; Path=/; Max-Age=${Math.floor(REFRESH_TOKEN_TTL/1000)}${process.env.NODE_ENV==='production'?'; Secure':''}; SameSite=Lax`);
   
-      return res.status(200).json({ accessToken, user: { username: user.username, id: user.id, email: user.email, roles: user.roles } });
+      // include following so the client can persist follow state
+      return res.status(200).json({ accessToken, user: { username: user.username, id: user.id, email: user.email, roles: user.roles, following: user.following || [] } });
     } catch (err) {
       console.error("Login error", err);
       return res.status(500).json({ message: "Internal server error" });
@@ -336,22 +412,6 @@ app.post('/auth/logout', async (req, res) => {
     }
 })
 
-// app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
-//     const { id } = req.params;
-//     try {
-//         const post = await db.collection('posts').findOne({ id });
-//         if (!post) {
-//             return res.status(404).json({ message: 'Post not found' });
-//         }
-//         return res.status(200).json(post);
-//     } catch (err) {
-//         console.error('Error fetching post', err);
-//         return res.status(500).json({ message: 'Failed to fetch post' });
-//     }
-// });
-
-
-
 
 
 
@@ -363,8 +423,8 @@ app.post('/api/posts', authenticateToken, async (req, res) => {
         username: req.user.username,
         post: req.body.text,
         createdAt: new Date(),
-        comment : [],
-        likes: [],
+        comment : 0,
+        likes: 0,
         is_reply: false,
     };
     try  {
@@ -383,7 +443,24 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
       const following = await db.collection('users').findOne({ id: userId }, { projection: { following: 1 } });
       const ids = [...following.following, userId]
       const posts = await db.collection('posts').find({ userId: { $in: ids } }).sort({ createdAt: -1 }).toArray();
-      return res.status(200).json(posts);
+
+      // annotate posts with whether current user liked or bookmarked them
+      const postIds = posts.map(p => p.id)
+      let likedIds = []
+      let bookmarkedIds = []
+      try {
+        if (postIds.length > 0) {
+          const likes = await db.collection('likes').find({ tweetId: { $in: postIds }, userId }).project({ tweetId: 1 }).toArray()
+          likedIds = likes.map(l => l.tweetId)
+          const bookmarks = await db.collection('bookmarks').find({ postId: { $in: postIds }, userId }).project({ postId: 1 }).toArray()
+          bookmarkedIds = bookmarks.map(b => b.postId)
+        }
+      } catch (e) {
+        console.warn('Could not annotate likes/bookmarks for posts', e)
+      }
+
+      const annotated = posts.map(p => ({ ...p, youLiked: likedIds.includes(p.id), bookmarked: bookmarkedIds.includes(p.id) }))
+      return res.status(200).json(annotated);
     } catch (err) {
       console.error('Error fetching posts', err);
       return res.status(500).json({ message: 'Failed to fetch posts' });
@@ -392,8 +469,63 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
 
 
 
+app.post('/api/posts/:id/likes', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const userId = req.user.id;
+    try {
+        const post = await db.collection('posts').findOne({ id });
+        if (!post) {
+            return res.status(404).json({ message: 'Post not found' });
+        }
+    // Use upsert to atomically create the like only if missing.
+    // $setOnInsert ensures we don't overwrite existing documents.
+    const likeResult = await db.collection('likes').updateOne(
+      { tweetId: id, userId },
+      { $setOnInsert: { tweetId: id, userId, createdAt: new Date() } },
+      { upsert: true }
+    );
 
+    // If an insert happened (upsert created a new doc), increment the post's likes count.
+    const inserted = (likeResult.upsertedCount && likeResult.upsertedCount > 0) || !!likeResult.upsertedId
+    if (inserted) {
+      await db.collection('posts').updateOne({ id }, { $inc: { likes: 1 } });
+    }
 
+    // Return current like count and whether this action resulted in a new like.
+    const current = await db.collection('posts').findOne({ id }, { projection: { likes: 1 } });
+    return res.status(200).json({ liked: true, created: !!inserted, likeCount: current ? current.likes : 0 });
+    } catch (err) {
+        console.error('Error liking post', err);
+        return res.status(500).json({ message: 'Failed to like post' });
+    }
+});
+
+// Unlike (delete a like) - idempotent
+app.delete('/api/posts/:id/likes', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  try {
+    const post = await db.collection('posts').findOne({ id });
+    if (!post) return res.status(404).json({ message: 'Post not found' });
+
+    const del = await db.collection('likes').deleteOne({ tweetId: id, userId });
+
+    if (del.deletedCount === 1) {
+      // decrement the post's like counter, but avoid going negative
+      await db.collection('posts').updateOne({ id, likes: { $gt: 0 } }, { $inc: { likes: -1 } });
+      const current = await db.collection('posts').findOne({ id }, { projection: { likes: 1 } });
+      return res.status(200).json({ liked: false, deleted: true, likeCount: current ? current.likes : 0 });
+    }
+
+    // nothing to delete (idempotent)
+    const current = await db.collection('posts').findOne({ id }, { projection: { likes: 1 } });
+    return res.status(200).json({ liked: false, deleted: false, likeCount: current ? current.likes : 0 });
+  } catch (err) {
+    console.error('Error unliking post', err);
+    return res.status(500).json({ message: 'Failed to unlike post' });
+  }
+});
+ 
 app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
     const { id } = req.params;
     try {
@@ -402,8 +534,28 @@ app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
             return res.status(404).json({ message: 'Post not found' });
         }
         const comments = await db.collection('comments').find({ tweetId: id }).sort({ createdAt: -1 }).toArray();
-        const data = {post : post, comments : comments};
-        console.log(data);
+        // check whether current user has liked this post
+        let youLiked = false
+        try {
+          const like = await db.collection('likes').findOne({ tweetId: id, userId: req.user.id })
+          youLiked = !!like
+        } catch (e) {
+          console.warn('Failed to check like status', e)
+        }
+
+        // check whether current user has bookmarked this post
+        let bookmarked = false
+        try {
+          const bm = await db.collection('bookmarks').findOne({ postId: id, userId: req.user.id })
+          bookmarked = !!bm
+        } catch (e) {
+          console.warn('Failed to check bookmark status', e)
+        }
+
+        // attach youLiked flag to post object for client convenience
+        const postWithFlag = { ...post, youLiked, bookmarked }
+        const data = { post: postWithFlag, comments }
+        console.log('Fetched postfeed:', { id, youLiked, commentsCount: comments.length })
 
         return res.status(200).json(data);
     } catch (err) {
@@ -432,12 +584,118 @@ app.post('/api/posts/:id/comments', authenticateToken, async (req, res) => {
             comment,
             createdAt: new Date(),
         };
-        await db.collection('comments').insertOne(newComment);
-        return res.status(201).json({ message: 'Comment added' });
+    const insertResult = await db.collection('comments').insertOne(newComment);
+
+    // Increment the comment counter on the post document.
+    // Field name is `comment` on posts (number), so increment by 1.
+    await db.collection('posts').updateOne({ id }, { $inc: { comment: 1 } });
+
+    // Read the updated comment count to return to the client
+    const current = await db.collection('posts').findOne({ id }, { projection: { comment: 1 } });
+
+    return res.status(201).json({ message: 'Comment added', comment: newComment, commentCount: current ? current.comment : null });
     } catch (err) {
         console.error('Error adding comment', err);
         return res.status(500).json({ message: 'Failed to add comment' });
     }
+});
+
+// Toggle/add/remove bookmark for a post (uses a separate `bookmarks` collection)
+app.patch('/api/posts/:id/bookmark', authenticateToken, async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+  try {
+    const post = await db.collection('posts').findOne({ id });
+    if (!post) return res.status(404).json({ message: 'Post not found' });
+
+    const body = req.body || {};
+    const requested = typeof body.bookmark === 'boolean' ? body.bookmark : undefined;
+
+    if (requested === undefined) {
+      // toggle behavior: check existing bookmark
+      const existing = await db.collection('bookmarks').findOne({ userId, postId: id });
+      if (existing) {
+        await db.collection('bookmarks').deleteOne({ userId, postId: id });
+        return res.status(200).json({ bookmarked: false });
+      } else {
+        await db.collection('bookmarks').updateOne(
+          { userId, postId: id },
+          { $setOnInsert: { userId, postId: id, createdAt: new Date() } },
+          { upsert: true }
+        );
+        return res.status(200).json({ bookmarked: true });
+      }
+    }
+
+    if (requested) {
+      // add (idempotent)
+      await db.collection('bookmarks').updateOne(
+        { userId, postId: id },
+        { $setOnInsert: { userId, postId: id, createdAt: new Date() } },
+        { upsert: true }
+      );
+      return res.status(200).json({ bookmarked: true });
+    }
+
+    // requested === false -> remove
+    await db.collection('bookmarks').deleteOne({ userId, postId: id });
+    return res.status(200).json({ bookmarked: false });
+  } catch (err) {
+    console.error('Error toggling bookmark', err);
+    return res.status(500).json({ message: 'Failed to toggle bookmark' });
+  }
+});
+
+// List bookmarked posts for current user (optional helper endpoint)
+app.get('/api/bookmarks', authenticateToken, async (req, res) => {
+  const userId = req.user.id;
+  try {
+    const bookmarks = await db.collection('bookmarks').find({ userId }).toArray();
+    const postIds = bookmarks.map(b => b.postId);
+    const posts = postIds.length ? await db.collection('posts').find({ id: { $in: postIds } }).toArray() : [];
+    return res.status(200).json({ posts });
+  } catch (err) {
+    console.error('Error fetching bookmarks', err);
+    return res.status(500).json({ message: 'Failed to fetch bookmarks' });
+  }
+});
+
+app.get('/api/connect', authenticateToken, async (req, res) => {
+  try {
+    // only return public fields to the client and exclude the current user
+    const currentUserId = req.user.id
+    const users = await db.collection('users')
+      .find({ id: { $ne: currentUserId } }, { projection: { id: 1, username: 1, _id: 0 } })
+      .toArray();
+    const following = await db.collection('users').findOne({ id: currentUserId }, { projection: { following: 1 } });
+    return res.status(200).json({ users, following });
+  } catch (err) {
+    console.error('Error fetching users', err);
+    return res.status(500).json({ message: 'Failed to fetch users' });
+  }
+
+});
+
+
+
+app.patch('/api/connect/:userId', authenticateToken, async (req, res) => {
+  const { userId } = req.params;
+  const currentUserId = req.user.id
+  try {
+    const response = await db.collection('users').updateOne(
+      { id: currentUserId },
+      { $addToSet: { following: userId } } // addToSet prevents duplicates
+    );
+    if (response.matchedCount === 0) {
+      return res.status(404).json({ message: 'Current user not found' });
+    }
+    // return the updated user so client can update AuthContext
+    const updated = await db.collection('users').findOne({ id: currentUserId }, { projection: { id: 1, username: 1, email: 1, roles: 1, following: 1, _id: 0 } });
+    return res.status(200).json({ message: 'User followed', user: updated });
+  } catch (err) {
+    console.error('Error following user', err);
+    return res.status(500).json({ message: 'Failed to follow user' });
+  }
 });
 
 connectDB().then(() => {

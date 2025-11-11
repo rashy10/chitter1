@@ -7,6 +7,8 @@ import Home from './pages/Home'
 import Profile from './pages/Profile'
 import Verify from './pages/Verify'
 import Postfeed from './pages/Postfeed'
+import Connect from './pages/Connect'
+import Bookmarks from './pages/Bookmarks'
 import './App.css'
 
 function Nav() {
@@ -42,6 +44,8 @@ function AppInner() {
           <Route path="/login" element={<Login />} />
           <Route path="/postfeed/:id" element={<RequireAuth><Postfeed /></RequireAuth>} />
           <Route path="/verify" element={<Verify />} />
+          <Route path="/bookmarks" element={<RequireAuth><Bookmarks /></RequireAuth>} />
+          <Route path="/people" element={<RequireAuth><Connect/></RequireAuth>} />
           <Route path="/register" element={<Register />} />
           <Route path="/profile/:id" element={<Profile />} />
         </Routes>
