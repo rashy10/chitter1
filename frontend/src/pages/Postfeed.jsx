@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import React from 'react'
+import Comments from '../components/Comments'
 
 export default function Postfeed() {
   const { id } = useParams()
@@ -11,6 +12,8 @@ export default function Postfeed() {
   const [loading, setLoading] = useState(!post)
   const [error, setError] = useState(null)
   const [comment, setComment] = useState('')
+  const [pendingLike, setPendingLike] = useState(false)
+  const [pendingBookmark, setPendingBookmark] = useState(false)
   useEffect(() => {
     if (post) {
       setLoading(false)
@@ -31,7 +34,7 @@ export default function Postfeed() {
         }
         const data = await response.json()
         // backend returns { post, comments }
-        const merged = { ...(data.post || data), comments: data.comments || data.post?.comments || [] }
+        const merged = { ...(data.post || data), comments: data.comments || data.post?.comments || [], youLiked: data.post?.youLiked ?? data.youLiked }
         if (!cancelled) setPost(merged)
       } catch (err) {
         console.error('Error loading post', err)
@@ -49,7 +52,7 @@ export default function Postfeed() {
   if (loading) return <div style={{ padding: 20 }}>Loading post...</div>
   if (error) return <div style={{ padding: 20, color: 'red' }}>{error}</div>
   if (!post) return <div style={{ padding: 20 }}>Post not found.</div>
-
+ 
 
   async function handleCommentSubmit(e) {
     e.preventDefault()
@@ -78,7 +81,73 @@ export default function Postfeed() {
       console.error('Failed to submit comment')
     }
   }
+    async function handleLike() {
+      if (pendingLike) return
+      setPendingLike(true)
+      // optimistic update
+      const prevYou = post.youLiked
+      const prevCount = post.likes || 0
+      const newYou = !prevYou
+      const newCount = newYou ? prevCount + 1 : Math.max(0, prevCount - 1)
+      setPost({ ...post, youLiked: newYou, likes: newCount })
 
+      try {
+        const response = await fetchWithAuth(`/api/posts/${post.id}/likes`, {
+          method: newYou ? 'POST' : 'DELETE',
+        })
+        if (response.ok) {
+          const body = await response.json().catch(() => ({}))
+          // reconcile with server-provided count if available
+          if (body.likeCount !== undefined) {
+            setPost(p => ({ ...p, youLiked: !!body.liked, likes: body.likeCount }))
+          } else {
+            setPost(p => ({ ...p, youLiked: newYou, likes: newCount }))
+          }
+        } else {
+          // rollback on failure
+          setPost({ ...post, youLiked: prevYou, likes: prevCount })
+          console.error('Failed to submit like')
+        }
+      } catch (err) {
+        // rollback
+        setPost({ ...post, youLiked: prevYou, likes: prevCount })
+        console.error('Failed to submit like', err)
+      } finally {
+        setPendingLike(false)
+      }
+  }
+  async function handleBookmark() {
+    if (pendingBookmark) return
+            setPendingBookmark(true)
+            const prevBookmarked = !!post.bookmarked
+            const newBookmarked = !prevBookmarked
+            // optimistic update
+            setPost(p => ({ ...p, bookmarked: newBookmarked }))
+            try {
+              const res = await fetchWithAuth(`/api/posts/${post.id}/bookmark`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bookmark: newBookmarked }),
+              })
+              if (res.ok) {
+                // if server returns canonical state, reconcile
+                const body = await res.json().catch(() => ({}))
+                if (body.bookmarked !== undefined) {
+                  setPost(p => ({ ...p, bookmarked: !!body.bookmarked }))
+                }
+              } else {
+                // rollback
+                setPost(p => ({ ...p, bookmarked: prevBookmarked }))
+                console.error('Failed to toggle bookmark')
+              }
+            } catch (err) {
+              setPost(p => ({ ...p, bookmarked: prevBookmarked }))
+              console.error('Failed to toggle bookmark', err)
+            } finally {
+              setPendingBookmark(false)
+            }
+    
+  }
 
   return (
     <div style={{ padding: 16 }}>
@@ -86,23 +155,27 @@ export default function Postfeed() {
       <div>{post.createdAt ? new Date(post.createdAt).toLocaleString() : 'unknown'}</div>
 
       <h1 style={{ marginTop: 8 }}>{post.post}</h1>
-      <div style={{ marginTop: 12 }}>❤️ {Array.isArray(post.likes) ? post.likes.length : 0}</div>
-      <div>💬 {Array.isArray(post.comment) ? post.comment.length : (Array.isArray(post.comments) ? post.comments.length : 0)}</div>
+      <div style={{ marginTop: 12 }}>
+        <button onClick={handleLike} disabled={pendingLike} aria-pressed={!!post.youLiked} style={{ cursor: pendingLike ? 'wait' : 'pointer' }}>
+          {post.youLiked ? '❤️' : '🤍'} {post.likes}
+        </button>
+      </div>
+      <div>💬 {post.comment || 0}</div>
+      <div style={{ marginTop: 12 }}>
+        <button
+          onClick={() => { handleBookmark() }}
+          disabled={pendingBookmark}
+          aria-pressed={!!post.bookmarked}
+          style={{ cursor: pendingBookmark ? 'wait' : 'pointer' }}
+        >
+          {post.bookmarked ? '🔖 Bookmarked' : '🔖 Bookmark'}
+        </button>
+      </div>
       <form onSubmit={handleCommentSubmit}>
         <input type="text" value={comment} onChange={e => setComment(e.target.value)} placeholder="Add a comment..." />
         <button type="submit">Add Comment</button>
       </form>
-      {post.comments && post.comments.length > 0 && (
-        <div style={{ marginTop: 20 }}>
-          <h3>Comments:</h3>
-          {post.comments.map((cmt, index) => (
-            <div key={index} style={{ borderTop: '1px solid #ccc', paddingTop: 8, marginTop: 8 }}>
-              <strong>{cmt.username}</strong>: {cmt.comment} <br />
-              <small>{cmt.createdAt ? new Date(cmt.createdAt).toLocaleString() : 'unknown'}</small>
-            </div>
-          ))}
-        </div>
-      )}
+      <Comments comments={post.comments} />
     </div>
   )
 }

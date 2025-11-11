@@ -6,8 +6,9 @@ export default function Post({ post, openPost }) {
         <span className="post-time">{new Date(post.createdAt).toLocaleString()}</span>
       </div>
       <div className="post-body">{post.post}</div>
-    </li>
+    ❤️{post.likes || 0} 💬 {post.comment || 0}
     
+    </li>
     </div>
 
   )

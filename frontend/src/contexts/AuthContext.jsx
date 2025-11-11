@@ -137,7 +137,7 @@ export function AuthProvider({ children }) {
     [accessToken],
   )
 
-  const value = { user, accessToken, loading, login, register, logout, fetchWithAuth, pendingVerificationEmail, verifyOtp }
+  const value = { user, setUser, accessToken, loading, login, register, logout, fetchWithAuth, pendingVerificationEmail, verifyOtp }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
