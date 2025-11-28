@@ -3,15 +3,17 @@ import { useParams, useLocation } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import React from 'react'
 import Comments from '../components/Comments'
+import Avatar from '../components/Avatar'
 
 export default function Postfeed() {
   const { id } = useParams()
   const location = useLocation()
   const [post, setPost] = useState(location.state?.post ?? null)
-  const { fetchWithAuth } = useAuth()
+  const { user ,fetchWithAuth } = useAuth()
   const [loading, setLoading] = useState(!post)
   const [error, setError] = useState(null)
   const [comment, setComment] = useState('')
+  const [author,setAuthor] = useState(false)
   const [pendingLike, setPendingLike] = useState(false)
   const [pendingBookmark, setPendingBookmark] = useState(false)
   useEffect(() => {
@@ -33,8 +35,11 @@ export default function Postfeed() {
           throw new Error(`Failed to load post: ${response.status} ${text}`)
         }
         const data = await response.json()
-        // backend returns { post, comments }
+        
         const merged = { ...(data.post || data), comments: data.comments || data.post?.comments || [], youLiked: data.post?.youLiked ?? data.youLiked }
+        const isAuthor = user && merged && (user.id === merged.userId || user.roles.includes('Admin'))
+        setAuthor(isAuthor)
+        console.log('Loaded post data:', merged)
         if (!cancelled) setPost(merged)
       } catch (err) {
         console.error('Error loading post', err)
@@ -64,9 +69,9 @@ export default function Postfeed() {
       headers: { 'Content-Type': 'application/json' },
     })
     if (response.ok) {
-      // clear input and reload post (so comments are fetched)
+    
       setComment('')
-      // reload post and comments
+      
       try {
         const res2 = await fetchWithAuth(`/api/postsfeed/${post.id}`, { method: 'GET' })
         if (res2.ok) {
@@ -84,7 +89,7 @@ export default function Postfeed() {
     async function handleLike() {
       if (pendingLike) return
       setPendingLike(true)
-      // optimistic update
+      
       const prevYou = post.youLiked
       const prevCount = post.likes || 0
       const newYou = !prevYou
@@ -97,19 +102,19 @@ export default function Postfeed() {
         })
         if (response.ok) {
           const body = await response.json().catch(() => ({}))
-          // reconcile with server-provided count if available
+        
           if (body.likeCount !== undefined) {
             setPost(p => ({ ...p, youLiked: !!body.liked, likes: body.likeCount }))
           } else {
             setPost(p => ({ ...p, youLiked: newYou, likes: newCount }))
           }
         } else {
-          // rollback on failure
+      
           setPost({ ...post, youLiked: prevYou, likes: prevCount })
           console.error('Failed to submit like')
         }
       } catch (err) {
-        // rollback
+      
         setPost({ ...post, youLiked: prevYou, likes: prevCount })
         console.error('Failed to submit like', err)
       } finally {
@@ -121,7 +126,7 @@ export default function Postfeed() {
             setPendingBookmark(true)
             const prevBookmarked = !!post.bookmarked
             const newBookmarked = !prevBookmarked
-            // optimistic update
+            
             setPost(p => ({ ...p, bookmarked: newBookmarked }))
             try {
               const res = await fetchWithAuth(`/api/posts/${post.id}/bookmark`, {
@@ -130,13 +135,13 @@ export default function Postfeed() {
                 body: JSON.stringify({ bookmark: newBookmarked }),
               })
               if (res.ok) {
-                // if server returns canonical state, reconcile
+                
                 const body = await res.json().catch(() => ({}))
                 if (body.bookmarked !== undefined) {
                   setPost(p => ({ ...p, bookmarked: !!body.bookmarked }))
                 }
               } else {
-                // rollback
+                
                 setPost(p => ({ ...p, bookmarked: prevBookmarked }))
                 console.error('Failed to toggle bookmark')
               }
@@ -148,13 +153,35 @@ export default function Postfeed() {
             }
     
   }
+    async function handleDeletePost() {
+        try {   
+            const response = await fetchWithAuth(`/api/posts/${post.id}`, { method: 'DELETE' });
+            if (response.ok) {
+                window.location.href = '/';
+            } else {
+                const text = await response.text();
+                throw new Error(`Failed to delete post: ${response.status} ${text}`);
+            }
+        } catch (err) {
+            console.error('Failed to delete post', err);
+        }   
+
+    }
+
 
   return (
     <div style={{ padding: 16 }}>
+      <Avatar avatarUrl={post.avatarUrl} size={40} alt={`${post.username}'s avatar`} />
       <span><strong>{post.username}</strong> </span>
       <div>{post.createdAt ? new Date(post.createdAt).toLocaleString() : 'unknown'}</div>
 
       <h1 style={{ marginTop: 8 }}>{post.post}</h1>
+      
+      {post.mediaUrl && (
+        <div style={{ marginTop: 12 }}>
+          <img src={post.mediaUrl} alt="Post media" className="post-media" />
+        </div>
+      )}
       <div style={{ marginTop: 12 }}>
         <button onClick={handleLike} disabled={pendingLike} aria-pressed={!!post.youLiked} style={{ cursor: pendingLike ? 'wait' : 'pointer' }}>
           {post.youLiked ? '❤️' : '🤍'} {post.likes}
@@ -174,7 +201,9 @@ export default function Postfeed() {
       <form onSubmit={handleCommentSubmit}>
         <input type="text" value={comment} onChange={e => setComment(e.target.value)} placeholder="Add a comment..." />
         <button type="submit">Add Comment</button>
+
       </form>
+      {author && <button onClick={handleDeletePost}>Delete</button>}
       <Comments comments={post.comments} />
     </div>
   )

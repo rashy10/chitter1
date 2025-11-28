@@ -47,3 +47,16 @@ button{margin-top:12px;padding:8px 12px;border-radius:6px;background:var(--accen
 .post-user{font-weight:600}
 .error{color:#fca5a5;margin-top:8px}
 .info{color:#bbf7d0;margin-top:8px}
+
+/* Ensure post media has a consistent aspect ratio and size across posts.
+   Keep rule in App.css so it's available globally (detailed post view, lists, etc.)
+*/
+.post-media{
+  display:block;
+  width:100%;
+  max-width:560px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius:8px;
+  margin-top:8px;
+}

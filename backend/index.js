@@ -9,7 +9,7 @@ const bcrypt = require('bcrypt')
 const jwt = require('jsonwebtoken')
 const crypto = require('crypto')
 const nodemailer = require('nodemailer')
-const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, DeleteObjectCommand} = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 dotenv.config();
@@ -68,8 +68,45 @@ function authenticateToken(req, res, next) {
     }
 }
 
+function s3KeyFromPublicUrl(publicUrl) {
+  if (!publicUrl) return null;
+  // Example URL forms:
+  // https://<bucket>.s3.<region>.amazonaws.com/<key>
+  // https://s3.<region>.amazonaws.com/<bucket>/<key>
+  try {
+    const u = new URL(publicUrl);
+    // Case 1: <bucket>.s3.<region>.amazonaws.com
+    const hostParts = u.hostname.split('.');
+    if (hostParts.length >= 3 && hostParts[1] === 's3') {
+      // key is pathname without the leading slash
+      return u.pathname.slice(1);
+    }
+    // Case 2: s3.<region>.amazonaws.com/<bucket>/<key>
+    if (u.hostname.startsWith('s3.')) {
+      const parts = u.pathname.split('/').filter(Boolean); // [bucket, key...]
+      parts.shift(); // remove bucket
+      return parts.join('/');
+    }
+    
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
 
-
+async function deleteS3Object(key) {
+  if (!key) return;
+  try {
+    await s3Client.send(new DeleteObjectCommand({
+      Bucket: BUCKET_NAME,
+      Key: key,
+    }));
+    console.log('S3 object deleted', key);
+  } catch (err) {
+    // Log and continue; you may want to retry or enqueue for background cleanup
+    console.warn('Failed to delete S3 object', key, err);
+  }
+}
 
 let db; // we'll store our database reference here
 
@@ -101,6 +138,7 @@ async function connectDB() {
 
 
 app.post('/api/generate-upload-url', authenticateToken,async (req, res) => {
+  console.log('Generating upload URL');
   try {
     const { fileName, fileType } = req.body;
 
@@ -130,16 +168,18 @@ app.post('/api/generate-upload-url', authenticateToken,async (req, res) => {
     const uploadUrl = await getSignedUrl(s3Client, command, {
       expiresIn: 60, // 60 seconds
     });
+    
 
     // --- Generate the final public URL ---
     // This is the URL you will store in MongoDB
     const publicUrl = `https://s3.${BUCKET_REGION}.amazonaws.com/${BUCKET_NAME}/${fileKey}`;
     // Note: A more robust way is `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${fileKey}`
-
+    console.log(publicUrl);
     // --- Send the URLs back to the React app ---
     res.status(200).json({
       uploadUrl: uploadUrl,
       publicUrl: publicUrl, // The URL to store in your database
+      fileKey: fileKey,
     });
 
   } catch (error) {
@@ -422,6 +462,7 @@ app.post('/api/posts', authenticateToken, async (req, res) => {
         userId: req.user.id,
         username: req.user.username,
         post: req.body.text,
+        mediaUrl: req.body.mediaUrl || null,
         createdAt: new Date(),
         comment : 0,
         likes: 0,
@@ -444,8 +485,24 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
       const ids = [...following.following, userId]
       const posts = await db.collection('posts').find({ userId: { $in: ids } }).sort({ createdAt: -1 }).toArray();
 
-      // annotate posts with whether current user liked or bookmarked them
       const postIds = posts.map(p => p.id)
+
+      const userIds = Array.from(new Set(posts.map(p => p.userId)));
+      if (userIds.length > 0) {
+        const users = await db.collection('users')
+          .find({ id: { $in: userIds } })
+          .project({ id: 1, avatarKey: 1, _id: 0 })
+          .toArray();
+
+        const avatarMap = {};
+        users.forEach(u => {
+          avatarMap[u.id] = u && u.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${u.avatarKey}` : null;
+        });
+
+        posts.forEach(p => {
+          p.avatarUrl = avatarMap[p.userId] || null;
+        });
+      }
       let likedIds = []
       let bookmarkedIds = []
       try {
@@ -460,6 +517,7 @@ app.get('/api/posts', authenticateToken, async (req, res) => {
       }
 
       const annotated = posts.map(p => ({ ...p, youLiked: likedIds.includes(p.id), bookmarked: bookmarkedIds.includes(p.id) }))
+      
       return res.status(200).json(annotated);
     } catch (err) {
       console.error('Error fetching posts', err);
@@ -533,8 +591,15 @@ app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
         if (!post) {
             return res.status(404).json({ message: 'Post not found' });
         }
+        const avatarKey = await db.collection('users').findOne({ id: post.userId }, { projection: { avatarKey: 1, _id: 0 } });
+        if (avatarKey && avatarKey.avatarKey) {
+          post.avatarUrl = `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${avatarKey.avatarKey}`;
+        } else {
+          post.avatarUrl = null;
+        } 
+
         const comments = await db.collection('comments').find({ tweetId: id }).sort({ createdAt: -1 }).toArray();
-        // check whether current user has liked this post
+       
         let youLiked = false
         try {
           const like = await db.collection('likes').findOne({ tweetId: id, userId: req.user.id })
@@ -543,7 +608,6 @@ app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
           console.warn('Failed to check like status', e)
         }
 
-        // check whether current user has bookmarked this post
         let bookmarked = false
         try {
           const bm = await db.collection('bookmarks').findOne({ postId: id, userId: req.user.id })
@@ -555,8 +619,7 @@ app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
         // attach youLiked flag to post object for client convenience
         const postWithFlag = { ...post, youLiked, bookmarked }
         const data = { post: postWithFlag, comments }
-        console.log('Fetched postfeed:', { id, youLiked, commentsCount: comments.length })
-
+       
         return res.status(200).json(data);
     } catch (err) {
         console.error('Error fetching post', err);
@@ -662,11 +725,15 @@ app.get('/api/bookmarks', authenticateToken, async (req, res) => {
 
 app.get('/api/connect', authenticateToken, async (req, res) => {
   try {
-    // only return public fields to the client and exclude the current user
+   
     const currentUserId = req.user.id
     const users = await db.collection('users')
-      .find({ id: { $ne: currentUserId } }, { projection: { id: 1, username: 1, _id: 0 } })
+      .find({ id: { $ne: currentUserId } }, { projection: { id: 1, username: 1, avatarKey: 1, _id: 0 } })
       .toArray();
+    users.forEach(u => {
+      u.avatarUrl = u.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${u.avatarKey}` : null;
+    });
+  
     const following = await db.collection('users').findOne({ id: currentUserId }, { projection: { following: 1 } });
     return res.status(200).json({ users, following });
   } catch (err) {
@@ -696,6 +763,108 @@ app.patch('/api/connect/:userId', authenticateToken, async (req, res) => {
     console.error('Error following user', err);
     return res.status(500).json({ message: 'Failed to follow user' });
   }
+});
+
+// --- User profile endpoints ---
+// Public: get a user's public profile (no auth required)
+app.get('/api/users/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await db.collection('users').findOne(
+      { id },
+      { projection: { id: 1, username: 1, bio: 1, createdAt: 1, avatarKey: 1, _id: 0 } }
+    );
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    const avatarUrl = user.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${user.avatarKey}` : null;
+    return res.status(200).json({ user: { id: user.id, username: user.username, bio: user.bio || null, createdAt: user.createdAt, avatarUrl } });
+  } catch (err) {
+    console.error('Error fetching user profile', err);
+    return res.status(500).json({ message: 'Failed to fetch profile' });
+  }
+});
+
+// Authenticated: update current user's profile (username, bio)
+app.patch('/api/users/me', authenticateToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+  const { username, bio, avatarKey } = req.body || {};
+    const update = {};
+    if (username) update.username = username;
+    if (bio !== undefined) update.bio = bio;
+    if (avatarKey) update.avatarKey = avatarKey;
+
+    if (username) {
+      // ensure username uniqueness
+      const existing = await db.collection('users').findOne({ username, id: { $ne: userId } });
+      if (existing) return res.status(400).json({ message: 'Username already taken' });
+    }
+
+    if (Object.keys(update).length === 0) return res.status(400).json({ message: 'No fields to update' });
+
+    await db.collection('users').updateOne({ id: userId }, { $set: update });
+    const user = await db.collection('users').findOne({ id: userId }, { projection: { id: 1, username: 1, createdAt: 1, email: 1, bio: 1, avatarKey: 1, following: 1, _id: 0 } });
+    const avatarUrl = user && user.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${user.avatarKey}` : null;
+    return res.status(200).json({ user: { id: user.id, username: user.username, email: user.email, bio: user.bio || null, avatarUrl, following: user.following || [], createdAt: user.createdAt || null } });
+  } catch (err) {
+    console.error('Error updating profile', err);
+    return res.status(500).json({ message: 'Failed to update profile' });
+  }
+});
+
+// Authenticated: list posts by user id (annotated for the viewer)
+app.get('/api/users/:id/posts', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const viewerId = req.user && req.user.id;
+    const posts = await db.collection('posts').find({ userId: id }).sort({ createdAt: -1 }).toArray();
+
+    const postIds = posts.map(p => p.id);
+    let likedIds = [];
+    let bookmarkedIds = [];
+    if (postIds.length > 0 && viewerId) {
+      const likes = await db.collection('likes').find({ tweetId: { $in: postIds }, userId: viewerId }).project({ tweetId: 1 }).toArray();
+      likedIds = likes.map(l => l.tweetId);
+      const bookmarks = await db.collection('bookmarks').find({ postId: { $in: postIds }, userId: viewerId }).project({ postId: 1 }).toArray();
+      bookmarkedIds = bookmarks.map(b => b.postId);
+    }
+
+    const annotated = posts.map(p => ({ ...p, youLiked: likedIds.includes(p.id), bookmarked: bookmarkedIds.includes(p.id) }));
+    return res.status(200).json({ posts: annotated });
+  } catch (err) {
+    console.error('Error fetching user posts', err);
+    return res.status(500).json({ message: 'Failed to fetch user posts' });
+  }
+});
+
+
+app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
+    const { id } = req.params;
+    const userId = req.user.id;
+     
+    try {
+        const post = await db.collection('posts').findOne({ id });
+        if (!post) {
+            return res.status(404).json({ message: 'Post not found' });
+        }
+        console.log('Delete post requested by user', userId, 'post owner', post.userId, 'user roles', req.user.roles);
+        if (!req.user.roles.includes('Admin') && post.userId !== userId) {
+            return res.status(403).json({ message: 'Unauthorized to delete this post' });
+        }
+        if (post.mediaUrl){
+          const key = s3KeyFromPublicUrl(post.mediaUrl);
+          await deleteS3Object(key);
+        }
+        await db.collection('posts').deleteOne({ id });
+        // Optionally, delete associated likes, comments, bookmarks
+        await db.collection('likes').deleteMany({ tweetId: id });
+        await db.collection('comments').deleteMany({ tweetId: id });
+        await db.collection('bookmarks').deleteMany({ postId: id });
+
+        return res.status(200).json({ message: 'Post deleted' });
+    } catch (err) {
+        console.error('Error deleting post', err);
+        return res.status(500).json({ message: 'Failed to delete post' });
+    }
 });
 
 connectDB().then(() => {

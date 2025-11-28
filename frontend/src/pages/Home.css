@@ -26,6 +26,44 @@
 .post-card{ padding:12px;border-bottom:1px solid rgba(255,255,255,0.03); margin-bottom:8px }
 .post-meta{ display:flex; gap:8px; align-items:center; color:var(--muted); font-size:0.9rem }
 .post-body{ margin-top:8px }
+/* Ensure post media has a consistent aspect ratio and size across posts.
+   - Uses aspect-ratio (modern browsers) to keep a 16:9 frame
+   - object-fit: cover crops images to fill the frame without distortion
+   - max-width keeps the image from getting too wide on large screens
+   - width:100% makes it responsive inside the post card on narrow viewports
+*/
+
+.avatar {
+  display:inline-block;
+  overflow:hidden;
+  border-radius:50%;
+  background: rgba(255,255,255,0.03);
+  text-align:center;
+  color: var(--white);
+  vertical-align: middle;
+}
+.avatar img {
+  display:block;
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+.avatar-initials {
+  display:inline-block;
+  width:100%;
+  height:100%;
+  line-height:inherit;
+  text-align:center;
+}
+.post-media{
+  display:block;
+  width:100%;
+  max-width:560px; /* maximum visual size for media in posts */
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius:8px;
+  margin-top:8px;
+}
 .right-panel{ padding:12px }
 .profile-placeholder{ background: rgba(255,255,255,0.02); padding:12px; border-radius:8px }
 

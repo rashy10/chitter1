@@ -1,0 +1,75 @@
+/* Styles for Profile page */
+.profile-layout{
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.profile-aside.card{
+  min-height: 200px;
+  padding: 16px;
+}
+
+.profile-header{
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.profile-username{
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.profile-joined{
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.profile-bio{
+  margin-top: 12px;
+  color: var(--white);
+}
+
+.profile-actions{
+  margin-top: 12px;
+}
+
+.profile-form{
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.profile-form label{
+  font-size: 0.95rem;
+  color: var(--muted);
+}
+
+.profile-form input{
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.04);
+  background: transparent;
+  color: var(--white);
+}
+
+.profile-form .form-actions{
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+
+.profile-posts h3{
+  margin-top: 0;
+}
+
+.profile-post-item{ list-style: none; }
+
+.profile-card-avatar{ display:flex; align-items:center; }
+
+@media (max-width: 900px){
+  .profile-layout{ grid-template-columns: 1fr; }
+}
