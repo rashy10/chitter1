@@ -13,19 +13,48 @@ export default function Home() {
 
   const [posts, setPosts] = useState()
 
-  async function handleCreate(text) {
-    // locally append a new post; in future wire to API
-    const response = await fetchWithAuth('/api/posts', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }),
-    })
+  async function handleCreate(text,file) {
+    
+    // allow post when either non-empty text is provided or a file is attached
+    const hasText = typeof text === 'string' && text.trim().length > 0;
+    if (!hasText && !file) return;
 
-    if (response.ok) {
-      const newPost = await response.json()
-      fetchPosts()
-    } else {
-      console.error('Failed to create post')
+    try {
+      let mediaUrl = null;
+
+      // If a file is attached, get a presigned URL and upload it first
+      if (file) {
+        const data  = await fetchWithAuth('/api/generate-upload-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName: file.name, fileType: file.type }),
+        })
+        const res = await data.json()
+        const { uploadUrl, publicUrl } = res;
+        mediaUrl = publicUrl;
+
+        await fetch(uploadUrl, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': file.type },
+        });
+      }
+
+      // Always create the post (text may be empty string if only media)
+      const response = await fetchWithAuth('/api/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: (typeof text === 'string' ? text.trim() : ''), mediaUrl }),
+      })
+
+      if (response.ok) {
+        await response.json().catch(() => {})
+        fetchPosts()
+      } else {
+        console.error('Failed to create post')
+      }
+    } catch (err) {
+      console.error('Error creating post', err)
     }
   }
 
@@ -46,14 +75,13 @@ export default function Home() {
     }
   }, [fetchWithAuth])
 
-  // load posts on mount
   useEffect(() => {
     fetchPosts()
   }, [fetchPosts])
 
   return (
     <div>
-      <TopBar username={user.username} />
+      <TopBar username={user.username} id={user.id} />
       <div className="home-layout">
         <LeftNav />
         <div className="main-column">

@@ -22,11 +22,21 @@ export default function Connect() {
                 const data = await response.json();
                 const users = Array.isArray(data.users) ? data.users : [];
                 // determine current following list (prefer AuthContext, fallback to server-provided following)
+                                // determine followingList robustly
                 let followingList = [];
-                if (Array.isArray(currentUser?.following)) followingList = currentUser.following;
-                else if (data.following && Array.isArray(data.following.following)) followingList = data.following.following;
-                const annotated = users.map((u) => ({ ...u, isFollowing: followingList.includes(u.id) }));
-                if (mounted) setConnections(annotated);
+                if (Array.isArray(currentUser?.following)) {
+                  followingList = currentUser.following;
+                } else if (Array.isArray(data.following)) {
+                  followingList = data.following;
+                }
+                
+                // turn it into a Set for O(1) lookup
+                const followingSet = new Set(followingList);
+                const usersWithFollowState = users.map(u => ({ ...u, isFollowing: followingSet.has(u.id) }));
+                console.log( usersWithFollowState);
+                if (mounted) setConnections(usersWithFollowState);
+                
+                
             } catch (err) {
                 console.error('Failed to load connections', err);
                 if (mounted) setError(err.message || 'Failed to load connections');
