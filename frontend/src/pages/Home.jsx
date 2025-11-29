@@ -24,6 +24,7 @@ export default function Home() {
 
       // If a file is attached, get a presigned URL and upload it first
       if (file) {
+        
         const data  = await fetchWithAuth('/api/generate-upload-url', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -32,6 +33,7 @@ export default function Home() {
         const res = await data.json()
         const { uploadUrl, publicUrl } = res;
         mediaUrl = publicUrl;
+      
 
         await fetch(uploadUrl, {
           method: 'PUT',
