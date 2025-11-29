@@ -50,7 +50,7 @@ export default function Bookmarks() {
       ) : (
         <ul className="posts-list">
           {posts.map(p => (
-            <Post openPost={handleClickPost} key={p.id} post={p} />
+            <Post openPost={handleClickPost} key={p.id} post={p} avatarUrl={p.avatarUrl} />
           ))}
           
         </ul>

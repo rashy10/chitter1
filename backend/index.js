@@ -731,6 +731,10 @@ app.get('/api/bookmarks', authenticateToken, async (req, res) => {
     const bookmarks = await db.collection('bookmarks').find({ userId }).toArray();
     const postIds = bookmarks.map(b => b.postId);
     const posts = postIds.length ? await db.collection('posts').find({ id: { $in: postIds } }).toArray() : [];
+    posts.forEach(async p => {
+      p.avatarUrl = await db.collection('users').findOne({ id: p.userId }, { projection: { avatarKey: 1, _id: 0 } });
+      p.avatarUrl = p.avatarUrl && p.avatarUrl.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${p.avatarUrl.avatarKey}` : null;
+    });
     return res.status(200).json({ posts });
   } catch (err) {
     console.error('Error fetching bookmarks', err);
