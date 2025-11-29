@@ -18,7 +18,7 @@ export default function LeftNav() {
         <button className="ln-btn">likes</button>
         <button className="ln-btn" onClick={() => nav('/people')}>people</button>
         <button className="ln-btn" onClick={() => nav('/bookmarks')}>bookmark</button>
-        <button className="ln-btn" onClick={onLogout}>logout</button>
+        <button  onClick={onLogout}>logout</button>
       </nav>
     </aside>
   )
