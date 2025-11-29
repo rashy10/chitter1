@@ -728,13 +728,28 @@ app.patch('/api/posts/:id/bookmark', authenticateToken, async (req, res) => {
 app.get('/api/bookmarks', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   try {
+    // minimal: get bookmarks -> posts -> bulk users -> attach avatarUrl
     const bookmarks = await db.collection('bookmarks').find({ userId }).toArray();
     const postIds = bookmarks.map(b => b.postId);
-    const posts = postIds.length ? await db.collection('posts').find({ id: { $in: postIds } }).toArray() : [];
-    posts.forEach(async p => {
-      p.avatarUrl = await db.collection('users').findOne({ id: p.userId }, { projection: { avatarKey: 1, _id: 0 } });
-      p.avatarUrl = p.avatarUrl && p.avatarUrl.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${p.avatarUrl.avatarKey}` : null;
+    if (postIds.length === 0) return res.status(200).json({ posts: [] });
+
+    const posts = await db.collection('posts').find({ id: { $in: postIds } }).toArray();
+    const userIds = Array.from(new Set(posts.map(p => p.userId)));
+    const avatarMap = {};
+    if (userIds.length > 0) {
+      const users = await db.collection('users')
+        .find({ id: { $in: userIds } })
+        .project({ id: 1, avatarKey: 1, _id: 0 })
+        .toArray();
+      users.forEach(u => {
+        avatarMap[u.id] = u && u.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${u.avatarKey}` : null;
+      });
+    }
+
+    posts.forEach(p => {
+      p.avatarUrl = avatarMap[p.userId] || null;
     });
+
     return res.status(200).json({ posts });
   } catch (err) {
     console.error('Error fetching bookmarks', err);
