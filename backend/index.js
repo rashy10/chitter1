@@ -74,8 +74,8 @@ function authenticateToken(req, res, next) {
 // SameSite=Lax for convenience when frontend is served from the same origin.
 function buildRefreshCookie(token, maxAgeSeconds) {
   const encoded = encodeURIComponent(token || '')
-  const sameSite = process.env.NODE_ENV === 'production' ? 'None' : 'Lax'
-  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  const sameSite = 'None'
+  const secure = '; Secure'
   return `refreshToken=${encoded}; HttpOnly; Path=/; Max-Age=${Math.floor(maxAgeSeconds)}${secure}; SameSite=${sameSite}`
 }
 
