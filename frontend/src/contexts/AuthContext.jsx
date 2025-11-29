@@ -1,7 +1,17 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
 
-// During development Vite proxies /auth -> backend (see vite.config.js). Use relative paths.
-const BACKEND_BASE = import.meta.env.VITE_BACKEND_BASE || ''
+// During development Vite proxies /auth -> backend (see vite.config.js).
+// In production, set VITE_BACKEND_BASE to your backend (or it falls back to the Heroku URL).
+const BACKEND_BASE = import.meta.env.VITE_BACKEND_BASE || 'https://chitter-backend-app-4c5e1318fbab.herokuapp.com'
+
+function buildUrl(path) {
+  if (!path) return path
+  // if absolute URL passed, return as-is
+  if (path.startsWith('http')) return path
+  // ensure leading slash
+  const p = path.startsWith('/') ? path : `/${path}`
+  return BACKEND_BASE ? `${BACKEND_BASE}${p}` : p
+}
 
 const AuthContext = createContext(null)
 
@@ -16,7 +26,7 @@ export function AuthProvider({ children }) {
     let mounted = true
     ;(async () => {
       try {
-  const res = await fetch(`/auth/refresh`, { method: 'POST', credentials: 'include' })
+  const res = await fetch(buildUrl('/auth/refresh'), { method: 'POST', credentials: 'include' })
         if (!res.ok) {
           if (mounted) {
             setUser(null)
@@ -42,7 +52,7 @@ export function AuthProvider({ children }) {
 
   const login = useCallback(async (email, password) => {
     
-  const res = await fetch(`/auth/login`, {
+  const res = await fetch(buildUrl('/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -60,7 +70,7 @@ export function AuthProvider({ children }) {
 
   const register = useCallback(async (email, username, password) => {
     console.log(email, username, password);
-  const res = await fetch(`/auth/register`, {
+  const res = await fetch(buildUrl('/auth/register'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, username, password }),
@@ -86,7 +96,7 @@ export function AuthProvider({ children }) {
       code = maybeCode
     }
     if (!email) throw new Error('Email required for verification')
-    const res = await fetch(`/auth/verify`, {
+    const res = await fetch(buildUrl('/auth/verify'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, code }),
@@ -102,7 +112,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     try {
-  await fetch(`/auth/logout`, { method: 'POST', credentials: 'include' })
+  await fetch(buildUrl('/auth/logout'), { method: 'POST', credentials: 'include' })
     } catch (err) {
       console.error('Logout failed', err)
     }
@@ -116,16 +126,18 @@ export function AuthProvider({ children }) {
       const headers = new Headers(init.headers || {})
       if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
       const merged = { ...init, headers, credentials: init.credentials ?? 'include' }
-      let res = await fetch(input, merged)
+      // resolve input to absolute path when needed
+      const url = typeof input === 'string' ? buildUrl(input) : input
+      let res = await fetch(url, merged)
       if (res.status === 401) {
         // try refresh
-  const r = await fetch(`/auth/refresh`, { method: 'POST', credentials: 'include' })
+  const r = await fetch(buildUrl('/auth/refresh'), { method: 'POST', credentials: 'include' })
         if (r.ok) {
           const b = await r.json()
           setAccessToken(b.accessToken)
           setUser(b.user || null)
           headers.set('Authorization', `Bearer ${b.accessToken}`)
-          res = await fetch(input, merged)
+          res = await fetch(url, merged)
         } else {
           // refresh failed
           setUser(null)
