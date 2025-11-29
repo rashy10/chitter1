@@ -1,4 +1,10 @@
 {
+  "name": "chitter1-root",
+  "private": true,
+  "scripts": {
+    "start": "node backend/index.js",
+    "heroku-postbuild": "npm install --prefix backend && npm install --prefix frontend --production=false && npm run build --prefix frontend"
+  },
   "dependencies": {
     "react-router-dom": "^7.9.4"
   }
