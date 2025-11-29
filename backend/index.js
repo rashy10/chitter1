@@ -112,7 +112,9 @@ let db; // we'll store our database reference here
 
 async function connectDB() {
   try {
-    const client = new MongoClient(process.env.MONGODB_URI);
+    const client = new MongoClient(process.env.MONGODB_URI ,{
+      serverSelectionTimeoutMS: 8000, // optional but helps Heroku
+    });
     await client.connect();
     db = client.db(process.env.DB_NAME); // connect to the right DB
     console.log("✅ MongoDB connected");
