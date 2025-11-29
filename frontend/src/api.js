@@ -1,4 +1,5 @@
-const BACKEND_BASE = import.meta.env.VITE_BACKEND_BASE || 'http://localhost:3000'
+// Default to local dev, but fall back to your Heroku backend so builds without env still work
+const BACKEND_BASE = import.meta.env.VITE_BACKEND_BASE || 'https://chitter-backend-app-4c5e1318fbab.herokuapp.com'
 
 async function request(path, { method = 'GET', body, token, headers = {} } = {}) {
   const res = await fetch(`${BACKEND_BASE}${path}`, {
