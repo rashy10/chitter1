@@ -1,0 +1,36 @@
+/* Styles for Avatar component. Dynamic size is passed via CSS variables:
+   --avatar-size (default 40px)
+   --avatar-font-size (computed by JS)
+*/
+.avatar {
+  width: var(--avatar-size, 40px);
+  height: var(--avatar-size, 40px);
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #e6e6e6;
+  color: #333;
+  user-select: none;
+
+}
+
+.avatar:hover {
+  cursor: pointer;
+}
+
+.avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-initials {
+  font-weight: 600;
+  font-size: var(--avatar-font-size, 16px);
+  line-height: 1;
+}
+
+.avatar.small { border-radius: 6px; }

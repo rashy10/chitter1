@@ -171,7 +171,7 @@ export default function Postfeed() {
 
   return (
     <div style={{ padding: 16 }}>
-      <Avatar avatarUrl={post.avatarUrl} size={40} alt={`${post.username}'s avatar`} />
+      <Avatar avatarUrl={post.avatarUrl} size={40} alt={`${post.username}'s avatar`} userId={post.userId}/>
       <span><strong>{post.username}</strong> </span>
       <div>{post.createdAt ? new Date(post.createdAt).toLocaleString() : 'unknown'}</div>
 
