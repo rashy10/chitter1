@@ -68,6 +68,17 @@ function authenticateToken(req, res, next) {
     }
 }
 
+// Helper to build a Set-Cookie header for refresh tokens.
+// For cross-site (production) scenarios we need SameSite=None and Secure so browsers
+// will send the cookie on cross-origin XHR/fetch requests. In development we keep
+// SameSite=Lax for convenience when frontend is served from the same origin.
+function buildRefreshCookie(token, maxAgeSeconds) {
+  const encoded = encodeURIComponent(token || '')
+  const sameSite = process.env.NODE_ENV === 'production' ? 'None' : 'Lax'
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : ''
+  return `refreshToken=${encoded}; HttpOnly; Path=/; Max-Age=${Math.floor(maxAgeSeconds)}${secure}; SameSite=${sameSite}`
+}
+
 function s3KeyFromPublicUrl(publicUrl) {
   if (!publicUrl) return null;
   // Example URL forms:
@@ -345,8 +356,9 @@ app.post('/auth/refresh', async (req, res) => {
         const user = await db.collection('users').findOne({ id: record.userId })
         if (!user) return res.status(401).json({ message: 'User not found' })
 
-        const accessToken = jwt.sign({ sub: user.id, roles: user.roles ,username: user.username}, JWT_SECRET, { expiresIn: '10m' })
-        res.setHeader('Set-Cookie', `refreshToken=${encodeURIComponent(newToken)}; HttpOnly; Path=/; Max-Age=${Math.floor(REFRESH_TOKEN_TTL/1000)}${process.env.NODE_ENV==='production'?'; Secure':''}; SameSite=Lax`)
+  const accessToken = jwt.sign({ sub: user.id, roles: user.roles ,username: user.username}, JWT_SECRET, { expiresIn: '10m' })
+  // set rotated refresh token cookie
+  res.setHeader('Set-Cookie', buildRefreshCookie(newToken, REFRESH_TOKEN_TTL/1000))
   // include following so client can persist follow state
   return res.status(200).json({ accessToken, user: { id: user.id, username: user.username, email: user.email, roles: user.roles, following: user.following || [] } })
     } catch (err) {
@@ -428,7 +440,8 @@ app.post("/auth/login",async (req, res) => {
       const now = Date.now();
       await db.collection('refreshTokens').insertOne({ token: refreshToken, userId: user.id, createdAt: new Date(now), expiresAt: new Date(now + REFRESH_TOKEN_TTL), revoked: false });
   
-      res.setHeader('Set-Cookie', `refreshToken=${encodeURIComponent(refreshToken)}; HttpOnly; Path=/; Max-Age=${Math.floor(REFRESH_TOKEN_TTL/1000)}${process.env.NODE_ENV==='production'?'; Secure':''}; SameSite=Lax`);
+  // set refresh token cookie
+  res.setHeader('Set-Cookie', buildRefreshCookie(refreshToken, REFRESH_TOKEN_TTL/1000));
   
       // include following so the client can persist follow state
       return res.status(200).json({ accessToken, user: { username: user.username, id: user.id, email: user.email, roles: user.roles, following: user.following || [] } });
@@ -445,8 +458,8 @@ app.post('/auth/logout', async (req, res) => {
         if (token) {
             await db.collection('refreshTokens').updateOne({ token }, { $set: { revoked: true, revokedAt: new Date() } })
         }
-        // clear cookie (client will remove by setting expired cookie)
-        res.setHeader('Set-Cookie', `refreshToken=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax${process.env.NODE_ENV==='production'?'; Secure':''}`)
+  // clear cookie (client will remove by setting expired cookie)
+  res.setHeader('Set-Cookie', buildRefreshCookie('', 0))
         return res.status(200).json({ message: 'Logged out' })
     } catch (err) {
         console.error('Logout error', err)
