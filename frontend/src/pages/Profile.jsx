@@ -152,7 +152,7 @@ export default function Profile() {
     <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 24 }}>
       <aside className="card" style={{ minHeight: 200 }}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <Avatar avatarUrl={profile.avatarUrl} size={96} username={profile.username} />
+          <Avatar avatarUrl={profile.avatarUrl} size={96} username={profile.username} userId={profile.id}/>
           <div>
             <h2 style={{ margin: 0 }}>{profile.username}</h2>
             <div className="muted">Joined {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : 'unknown'}</div>
