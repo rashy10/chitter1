@@ -906,6 +906,9 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
 
 connectDB().then(() => {
   app.listen(PORT, () => {
+    if (process.env.NODE_ENV !== 'test') {
+      console.log('✅ Connected to Productions');
+    }
     console.log(`Server running on http://localhost:${PORT}`);
   });
 });
