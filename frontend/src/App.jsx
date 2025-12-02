@@ -9,6 +9,8 @@ import Verify from './pages/Verify'
 import Postfeed from './pages/Postfeed'
 import Connect from './pages/Connect'
 import Bookmarks from './pages/Bookmarks'
+import Welcome from './pages/Welcome'
+import Footer from './components/Footer'
 import './App.css'
 
 function Nav() {
@@ -32,7 +34,7 @@ function AppInner() {
 
   function RequireAuth({ children }) {
     if (loading) return <div style={{padding:20}}>Loading...</div>
-    if (!user) return <Navigate to="/login" replace />
+    if (!user) return <Navigate to="/welcome" replace />
     return children
   }
   return (
@@ -40,7 +42,8 @@ function AppInner() {
       <Nav/>
       <main className={isHome ? 'container container--full' : 'container'}>
         <Routes>
-          <Route path="/" element={<RequireAuth><Home /></RequireAuth>} />
+          <Route path="/welcome" element={ <Welcome />} />
+          <Route path="/" element={user ? <RequireAuth><Home /></RequireAuth> : <Navigate to="/welcome" />} />
           <Route path="/login" element={<Login />} />
           <Route path="/postfeed/:id" element={<RequireAuth><Postfeed /></RequireAuth>} />
           <Route path="/verify" element={<Verify />} />
@@ -50,6 +53,7 @@ function AppInner() {
           <Route path="/profile/:id" element={<Profile />} />
         </Routes>
       </main>
+      <Footer />
     </>
   )
 }

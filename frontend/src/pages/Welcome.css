@@ -1,0 +1,36 @@
+/* Simple welcome page styling */
+.welcome {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 48px;
+  padding: 48px 16px;
+}
+.welcome__panel {
+  max-width: 520px;
+}
+.welcome__title {
+  font-size: 2.25rem;
+  margin: 0 0 8px 0;
+}
+.welcome__lead {
+  color: #555;
+  margin-bottom: 20px;
+}
+.welcome__actions {
+  display:flex;
+  gap:12px;
+}
+.btn {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+}
+.btn--primary { background: #1da1f2; color: white; }
+.btn--ghost { background: transparent; border: 1px solid #ddd; }
+.welcome__art {
+  width: 420px;
+  max-width: 40vw;
+}
+.welcome__art img { width: 100%; display:block; border-radius:12px }
