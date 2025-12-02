@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1024" height="768" viewBox="0 0 1024 768" fill="none" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+  <rect width="1024" height="768" rx="24" fill="#F8FAFC"/>
+  <g transform="translate(128 128)">
+    <g>
+      <path d="M128 320c0-70.7 57.3-128 128-128h192c70.7 0 128 57.3 128 128v64H128v-64z" fill="#E6F0FF" />
+      <path d="M512 320c0-70.7 57.3-128 128-128h64v192H512v-64z" fill="#D3E8FF" />
+    </g>
+    <g transform="translate(64 32)">
+      <!-- left hand -->
+      <path d="M190 260c-16 0-28-12-28-28 0-12 8-20 18-26l110-58c22-12 48-5 60 17 12 22 5 48-17 60l-110 58c-6 4-12 6-23 6z" fill="#FFD8B5" />
+      <!-- right hand -->
+      <path d="M430 200c-6-12-20-18-32-14l-96 32c-20 6-30 28-24 48 6 20 28 30 48 24l96-32c12-4 20-16 20-28 0-4 0-6-12-30z" fill="#FFD8B5" />
+      <!-- handshake overlap -->
+      <path d="M270 236c-6 4-10 12-10 18 0 14 12 26 26 26 6 0 12-2 16-6l84-64c10-8 12-22 4-32-8-10-22-12-32-4l-84 64z" fill="#FFB380" />
+    </g>
+
+    <g transform="translate(0 380)">
+      <rect x="0" y="0" width="768" height="24" rx="12" fill="#E6EEF8" />
+      <text x="24" y="16" fill="#6B7280" font-family="Verdana" font-size="14">Connect with people. Share a moment. Say hello.</text>
+    </g>
+  </g>
+</svg>

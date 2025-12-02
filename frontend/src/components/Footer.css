@@ -1,0 +1,29 @@
+.footer {
+  background: #fafafa;
+  border-top: 1px solid #eee;
+  padding: 9px 0;
+  margin-top: 12px;
+}
+.footer__inner {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap: 16px;
+}
+.footer__brand {
+  font-weight:700;
+  color:#0f172a;
+}
+.footer__small {
+  color:#6b7280;
+  font-size:13px;
+}
+.footer__links a {
+  margin-left:12px;
+  color:#374151;
+  text-decoration:none;
+  font-size:14px;
+}
+.footer__links a:hover {
+  text-decoration:underline;
+}
