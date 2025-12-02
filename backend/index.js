@@ -18,7 +18,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // allow requests from frontend and allow cookies for refresh token
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'https://rashy10-chit-chat.vercel.app', credentials: true }));
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN || 'http://localhost:5173' || 'https://rashy10-chit-chat.vercel.app/', credentials: true }));
 app.use(bodyParser.json());
 
 
@@ -74,8 +74,11 @@ function authenticateToken(req, res, next) {
 // SameSite=Lax for convenience when frontend is served from the same origin.
 function buildRefreshCookie(token, maxAgeSeconds) {
   const encoded = encodeURIComponent(token || '')
-  const sameSite = 'None'
-  const secure = '; Secure'
+  // Use SameSite=None and Secure in production so cookies are sent cross-site over HTTPS.
+  // In development (local HTTP) prefer SameSite=Lax and no Secure so browsers accept the cookie.
+  const isProd = process.env.NODE_ENV === 'production'
+  const sameSite = isProd ? 'None' : 'Lax'
+  const secure = isProd ? '; Secure' : ''
   return `refreshToken=${encoded}; HttpOnly; Path=/; Max-Age=${Math.floor(maxAgeSeconds)}${secure}; SameSite=${sameSite}`
 }
 
