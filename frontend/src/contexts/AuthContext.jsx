@@ -2,7 +2,8 @@ import React, { createContext, useCallback, useContext, useEffect, useState } fr
 
 // During development Vite proxies /auth -> backend (see vite.config.js).
 // In production, set VITE_BACKEND_BASE to your backend (or it falls back to the Heroku URL).
-const BACKEND_BASE = import.meta.env.VITE_BACKEND_BASE 
+const BACKEND_BASE = 'https://chitter-backend-app-4c5e1318fbab.herokuapp.com'
+
 
 function buildUrl(path) {
   if (!path) return path
