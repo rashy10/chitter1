@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, useLocation } from 'react-router-dom'
+import { useParams, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import React from 'react'
 import Comments from '../components/Comments'
@@ -8,6 +8,7 @@ import Avatar from '../components/Avatar'
 export default function Postfeed() {
   const { id } = useParams()
   const location = useLocation()
+  const navigate = useNavigate()
   const [post, setPost] = useState(location.state?.post ?? null)
   const { user ,fetchWithAuth } = useAuth()
   const [loading, setLoading] = useState(!post)
@@ -157,7 +158,7 @@ export default function Postfeed() {
         try {   
             const response = await fetchWithAuth(`/api/posts/${post.id}`, { method: 'DELETE' });
             if (response.ok) {
-                window.location.href = '/';
+                navigate('/');
             } else {
                 const text = await response.text();
                 throw new Error(`Failed to delete post: ${response.status} ${text}`);
