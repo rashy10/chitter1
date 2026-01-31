@@ -7,6 +7,7 @@
   min-height: calc(100vh - 72px); /* leave room for nav */
   box-sizing: border-box;
   padding: 12px 0;
+ 
 }
 .left-nav{ padding:12px }
 .left-nav .brand{ font-weight:700; margin-bottom:12px }

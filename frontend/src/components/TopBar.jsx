@@ -7,7 +7,7 @@ export default function TopBar({username, id}) {
   
   return (
     <header className="top-bar">
-      <div onClick={() => nav('/')} className="brand">twitter</div>
+      <div onClick={() => nav('/')} className="brand">Chit-Chat</div>
       <div onClick={() => nav(`/profile/${id}`)} className="top-right">{username}</div>
     </header>
   )
