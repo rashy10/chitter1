@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 
 // allow requests from frontend and allow cookies for refresh token
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN ||  'https://chitter1.vercel.app', credentials: true }));
-//pp.use(cors({ origin: process.env.FRONTEND_ORIGIN ||  'http://localhost:5173', credentials: true }));
+//app.use(cors({ origin: process.env.FRONTEND_ORIGIN ||  'http://localhost:5173', credentials: true }));
 
 app.use(bodyParser.json());
 
