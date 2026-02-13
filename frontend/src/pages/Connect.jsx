@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { useAuth } from '../contexts/AuthContext';
-import PeopleCard from '../components/PeopleCard';
+import React, { useEffect, useState } from 'react'
+import { useAuth } from '../contexts/AuthContext'
+import PeopleCard from '../components/PeopleCard'
+import './Connect.css'
 
 export default function Connect() {
     const { user: currentUser, fetchWithAuth, setUser } = useAuth();
@@ -73,12 +74,17 @@ export default function Connect() {
     if (error) return <div style={{ color: 'red' }}>Error: {error}</div>;
 
     return (
-        <div>
-            <h1>People You May Know</h1>
+        <div className="connect-page">
+            <div className="connect-header">
+                <div>
+                    <h1 className="connect-title">People You May Know</h1>
+                    <p className="connect-subtitle">Follow people to see their posts in your feed.</p>
+                </div>
+            </div>
             {connections.length === 0 ? (
-                <p>No suggestions right now.</p>
+                <div className="connect-empty">No suggestions right now.</div>
             ) : (
-                <ul>
+                <ul className="people-list">
                     {connections.map((u) => {
                         const isFollowing = !!u.isFollowing;
                         const btnText = isFollowing ? 'Following' : 'Follow';
@@ -87,5 +93,5 @@ export default function Connect() {
                 </ul>
             )}
         </div>
-    );
+    )
 }

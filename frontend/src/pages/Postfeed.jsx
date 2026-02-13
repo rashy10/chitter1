@@ -4,6 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import React from 'react'
 import Comments from '../components/Comments'
 import Avatar from '../components/Avatar'
+import './Postfeed.css'
 
 export default function Postfeed() {
   const { id } = useParams()
@@ -171,41 +172,48 @@ export default function Postfeed() {
 
 
   return (
-    <div style={{ padding: 16 }}>
-      <Avatar avatarUrl={post.avatarUrl} size={40} alt={`${post.username}'s avatar`} userId={post.userId}/>
-      <span><strong>{post.username}</strong> </span>
-      <div>{post.createdAt ? new Date(post.createdAt).toLocaleString() : 'unknown'}</div>
-
-      <h1 style={{ marginTop: 8 }}>{post.post}</h1>
-      
-      {post.mediaUrl && (
-        <div style={{ marginTop: 12 }}>
-          <img src={post.mediaUrl} alt="Post media" className="post-media" />
+    <div className="postfeed-page">
+      <div className="card postfeed-card">
+        <div className="postfeed-header">
+          <Avatar avatarUrl={post.avatarUrl} size={40} alt={`${post.username}'s avatar`} userId={post.userId}/>
+          <div className="postfeed-meta">
+            <strong>{post.username}</strong>
+            <div className="muted">{post.createdAt ? new Date(post.createdAt).toLocaleString() : 'unknown'}</div>
+          </div>
         </div>
-      )}
-      <div style={{ marginTop: 12 }}>
-        <button onClick={handleLike} disabled={pendingLike} aria-pressed={!!post.youLiked} style={{ cursor: pendingLike ? 'wait' : 'pointer' }}>
-          {post.youLiked ? '❤️' : '🤍'} {post.likes}
-        </button>
-      </div>
-      <div>💬 {post.comment || 0}</div>
-      <div style={{ marginTop: 12 }}>
-        <button
-          onClick={() => { handleBookmark() }}
-          disabled={pendingBookmark}
-          aria-pressed={!!post.bookmarked}
-          style={{ cursor: pendingBookmark ? 'wait' : 'pointer' }}
-        >
-          {post.bookmarked ? '🔖 Bookmarked' : '🔖 Bookmark'}
-        </button>
-      </div>
-      <form onSubmit={handleCommentSubmit}>
-        <input type="text" value={comment} onChange={e => setComment(e.target.value)} placeholder="Add a comment..." />
-        <button type="submit">Add Comment</button>
 
-      </form>
-      {author && <button onClick={handleDeletePost}>Delete</button>}
-      <Comments comments={post.comments} />
+        <h1 className="postfeed-title">{post.post}</h1>
+        
+        {post.mediaUrl && (
+          <div style={{ marginTop: 12 }}>
+            <img src={post.mediaUrl} alt="Post media" className="post-media" />
+          </div>
+        )}
+
+        <div className="postfeed-actions">
+          <button onClick={handleLike} disabled={pendingLike} aria-pressed={!!post.youLiked}>
+            {post.youLiked ? '❤️' : '🤍'} {post.likes}
+          </button>
+          <div>💬 {post.comment || 0}</div>
+          <button
+            onClick={() => { handleBookmark() }}
+            disabled={pendingBookmark}
+            aria-pressed={!!post.bookmarked}
+          >
+            {post.bookmarked ? '🔖 Bookmarked' : '🔖 Bookmark'}
+          </button>
+          {author && <button onClick={handleDeletePost}>Delete</button>}
+        </div>
+
+        <form onSubmit={handleCommentSubmit} className="postfeed-form">
+          <input type="text" value={comment} onChange={e => setComment(e.target.value)} placeholder="Add a comment..." />
+          <button type="submit">Add Comment</button>
+        </form>
+      </div>
+
+      <div className="card postfeed-card">
+        <Comments comments={post.comments} />
+      </div>
     </div>
   )
 }

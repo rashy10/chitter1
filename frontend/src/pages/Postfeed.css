@@ -1,0 +1,48 @@
+.postfeed-page {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.postfeed-card {
+  padding: 16px;
+}
+
+.postfeed-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.postfeed-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.postfeed-title {
+  margin: 8px 0 0 0;
+  font-size: 1.4rem;
+}
+
+.postfeed-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.postfeed-actions button {
+  margin-top: 0;
+}
+
+.postfeed-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.postfeed-form input {
+  flex: 1;
+}

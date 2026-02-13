@@ -149,19 +149,22 @@ export default function Profile() {
   const isMe = currentUser && currentUser.id === profile.id
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 24 }}>
-      <aside className="card" style={{ minHeight: 200 }}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <Avatar avatarUrl={profile.avatarUrl} size={96} username={profile.username} userId={profile.id}/>
-          <div>
-            <h2 style={{ margin: 0 }}>{profile.username}</h2>
-            <div className="muted">Joined {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : 'unknown'}</div>
+    <div className="profile-page">
+      <section className="profile-hero card">
+        <div className="profile-header">
+          <Avatar avatarUrl={profile.avatarUrl} size={96} username={profile.username} userId={profile.id} />
+          <div className="profile-meta">
+            <h2 className="profile-username">{profile.username}</h2>
+            <div className="profile-joined">Joined {profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : 'unknown'}</div>
           </div>
         </div>
-        <div style={{ marginTop: 12 }}>{profile.bio || <span className="muted">No bio yet</span>}</div>
+
+        <div className="profile-bio">
+          {profile.bio || <span className="muted">No bio yet</span>}
+        </div>
 
         {isMe && !editing && (
-          <div style={{ marginTop: 12 }}>
+          <div className="profile-actions">
             <button className="btn secondary" onClick={() => setEditing(true)}>Edit profile</button>
           </div>
         )}
@@ -177,25 +180,24 @@ export default function Profile() {
             <label>Bio</label>
             <input value={formBio} onChange={e => setFormBio(e.target.value)} />
 
-            
             <div className="form-actions">
               <button className="btn" type="submit">Save</button>
               <button type="button" className="btn secondary" onClick={() => setEditing(false)}>Cancel</button>
             </div>
             {avatarFile && (
-              <div style={{ marginTop: 8 }}>
+              <div className="profile-upload">
                 <button type="button" className="btn" disabled={avatarUploading} onClick={uploadAvatar}>Upload avatar</button>
               </div>
             )}
           </form>
         )}
-      </aside>
+      </section>
 
-      <section>
+      <section className="profile-posts">
         <h3>Posts</h3>
         <ul className="posts-list">
           {posts.map(p => (
-            <li key={p.id} style={{ listStyle: 'none' }}>
+            <li key={p.id} className="profile-post-item">
               <div onClick={() => openPost(p.id)}>
                 <Post post={p} openPost={() => openPost(p.id)} />
               </div>
