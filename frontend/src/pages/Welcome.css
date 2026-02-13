@@ -2,36 +2,39 @@
 .welcome {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 48px;
-  padding: 48px 16px;
-  height: 50vh;
+  padding: 64px 24px;
+  min-height: 60vh;
 }
 .welcome__panel {
   max-width: 520px;
 }
 .welcome__title {
-  font-size: 2.25rem;
-  margin: 0 0 8px 0;
+  font-size: 2.6rem;
+  margin: 0 0 10px 0;
 }
 .welcome__lead {
-  color: #555;
-  margin-bottom: 20px;
+  color: var(--muted);
+  margin-bottom: 24px;
+  font-size: 1.05rem;
+  line-height: 1.6;
 }
 .welcome__actions {
   display:flex;
   gap:12px;
 }
-.btn {
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: none;
-  cursor: pointer;
-}
-.btn--primary { background: #1da1f2; color: white; }
-.btn--ghost { background: transparent; border: 1px solid #ddd; }
 .welcome__art {
-  width: 420px;
-  max-width: 40vw;
+  width: 440px;
+  max-width: 42vw;
 }
-.welcome__art img { width: 100%; display:block; border-radius:12px }
+.welcome__art img { width: 100%; display:block; border-radius:16px; box-shadow: var(--shadow) }
+
+@media (max-width: 900px) {
+  .welcome {
+    flex-direction: column;
+    text-align: center;
+  }
+  .welcome__actions { justify-content: center; }
+  .welcome__art { max-width: 70vw; }
+}

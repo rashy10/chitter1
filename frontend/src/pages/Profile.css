@@ -1,75 +1,81 @@
 /* Styles for Profile page */
-.profile-layout{
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 24px;
-  align-items: start;
-}
-
-.profile-aside.card{
-  min-height: 200px;
-  padding: 16px;
-}
-
-.profile-header{
+.profile-page {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.profile-hero.card {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.profile-header {
+  display: flex;
+  gap: 14px;
   align-items: center;
 }
 
-.profile-username{
-  margin: 0;
-  font-size: 1.4rem;
+.profile-meta {
+  min-width: 0;
 }
 
-.profile-joined{
+.profile-username {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.profile-joined {
   color: var(--muted);
   font-size: 0.95rem;
 }
 
-.profile-bio{
-  margin-top: 12px;
+.profile-bio {
+  font-size: 1.05rem;
+  line-height: 1.5;
   color: var(--white);
 }
 
-.profile-actions{
-  margin-top: 12px;
+.profile-actions {
+  margin-top: 6px;
 }
 
-.profile-form{
-  margin-top: 12px;
+.profile-form {
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.profile-form label{
+.profile-form label {
   font-size: 0.95rem;
   color: var(--muted);
 }
 
-.profile-form input{
+.profile-form input {
   padding: 10px;
   border-radius: 8px;
-  border: 1px solid rgba(255,255,255,0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
   background: transparent;
   color: var(--white);
 }
 
-.profile-form .form-actions{
+.profile-form .form-actions {
   margin-top: 10px;
   display: flex;
   gap: 8px;
 }
 
-.profile-posts h3{
-  margin-top: 0;
+.profile-upload {
+  margin-top: 8px;
 }
 
-.profile-post-item{ list-style: none; }
+.profile-posts h3 {
+  margin: 0 0 8px 0;
+}
 
-.profile-card-avatar{ display:flex; align-items:center; }
-
-@media (max-width: 900px){
-  .profile-layout{ grid-template-columns: 1fr; }
+.profile-post-item {
+  list-style: none;
 }
