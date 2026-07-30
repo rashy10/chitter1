@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:remote": "vite --mode remote",
     "build": "vite build",
+    "build:remote": "vite build --mode remote",
     "lint": "eslint .",
     "preview": "vite preview"
   },

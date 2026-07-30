@@ -3,23 +3,58 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { v4: uuidv4 } = require('uuid');
 const { MongoClient, ServerApiVersion } = require('mongodb');
-const dotenv = require( "dotenv");
-const { ObjectId } = require("mongodb");
-const bcrypt = require('bcrypt')
-const jwt = require('jsonwebtoken')
-const crypto = require('crypto')
-const nodemailer = require('nodemailer')
+const dotenv = require('dotenv');
+const { ObjectId } = require('mongodb');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const path = require('path');
+const nodemailer = require('nodemailer');
 const { S3Client, PutObjectCommand, DeleteObjectCommand} = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
-dotenv.config();
+// Which env file to load. Defaults to backend/.env; set ENV_FILE to flip profiles:
+//   ENV_FILE=.env.proddb npm run dev
+// Resolved against this directory so it works no matter which cwd the process was
+// started from (Heroku runs `node backend/index.js` from the repo root). On a hosted
+// platform the file simply won't exist, and the platform's real config vars are used.
+const ENV_FILE = process.env.ENV_FILE || '.env';
+dotenv.config({ path: path.resolve(__dirname, ENV_FILE) });
+
+// Fail fast on missing config rather than throwing on the first request that needs
+// it. Without JWT_SECRET, for example, every login would 500 at jwt.sign().
+const REQUIRED_ENV = ['MONGODB_URI', 'DB_NAME', 'JWT_SECRET'];
+const missingEnv = REQUIRED_ENV.filter(key => !process.env[key]);
+if (missingEnv.length > 0) {
+    console.error(`❌ Missing required environment variables: ${missingEnv.join(', ')}`);
+    console.error('   See backend/.env.example for the expected configuration.');
+    process.exit(1);
+}
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// allow requests from frontend and allow cookies for refresh token
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN ||  'https://chitter1.vercel.app', credentials: true }));
-//app.use(cors({ origin: process.env.FRONTEND_ORIGIN ||  'http://localhost:5173', credentials: true }));
+// Allowed browser origins, comma-separated, so dev and prod can both be configured
+// without editing code. Cookies require an exact origin match (credentials: true
+// forbids the '*' wildcard).
+const ALLOWED_ORIGINS = (process.env.FRONTEND_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map(o => o.trim())
+    .filter(Boolean)
+
+app.use(cors({
+    origin(origin, callback) {
+        // Requests without an Origin header (curl, server-to-server, same-origin
+        // navigation) are not subject to CORS, so let them through.
+        if (!origin) return callback(null, true)
+        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
+        // Respond without CORS headers rather than throwing, so a rejected origin
+        // gets a clean browser-side block instead of a 500.
+        console.warn('Blocked CORS origin', origin)
+        return callback(null, false)
+    },
+    credentials: true,
+}));
 
 app.use(bodyParser.json());
 
@@ -124,7 +159,256 @@ async function deleteS3Object(key) {
   }
 }
 
+// --- Pagination ------------------------------------------------------------------
+// Keyset ("cursor") pagination rather than skip/limit: skip has to walk and discard
+// every skipped document, so deep pages get linearly slower, and rows shift between
+// requests when new documents arrive mid-scroll — causing duplicates and gaps. A cursor
+// seeks straight into the index and is stable under concurrent inserts.
+const DEFAULT_PAGE_SIZE = 20;
+const MAX_PAGE_SIZE = 100;
+
+function parseLimit(raw) {
+  const parsed = parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PAGE_SIZE;
+  // Cap it so a client can't ask for the whole collection in one request.
+  return Math.min(parsed, MAX_PAGE_SIZE);
+}
+
+// Cursors are opaque base64 so clients treat them as tokens instead of building their
+// own and coupling to the internal shape.
+function encodeCursor(doc) {
+  if (!doc) return null;
+  const payload = JSON.stringify({ t: doc.createdAt, i: String(doc._id) });
+  return Buffer.from(payload).toString('base64url');
+}
+
+function decodeCursor(raw) {
+  if (!raw) return null;
+  try {
+    const { t, i } = JSON.parse(Buffer.from(String(raw), 'base64url').toString('utf8'));
+    const createdAt = new Date(t);
+    if (Number.isNaN(createdAt.getTime()) || !ObjectId.isValid(i)) return null;
+    return { createdAt, id: new ObjectId(i) };
+  } catch (err) {
+    return null; // malformed cursor — treated as "start from the beginning"
+  }
+}
+
+// "Strictly older than the cursor", with _id breaking createdAt ties so a page boundary
+// can never drop or repeat a document that shares a timestamp with its neighbour.
+function cursorFilter(cursor) {
+  if (!cursor) return null;
+  return {
+    $or: [
+      { createdAt: { $lt: cursor.createdAt } },
+      { createdAt: cursor.createdAt, _id: { $lt: cursor.id } },
+    ],
+  };
+}
+
+// Runs a keyset-paginated find and reports whether another page exists. Fetching
+// limit + 1 rows answers that without a second count query.
+async function paginatedFind(collectionName, filter, { limit, cursor }) {
+  const keyset = cursorFilter(cursor);
+  const query = keyset ? { $and: [filter, keyset] } : filter;
+  const docs = await db.collection(collectionName)
+    .find(query)
+    .sort({ createdAt: -1, _id: -1 })
+    .limit(limit + 1)
+    .toArray();
+
+  const hasMore = docs.length > limit;
+  const items = hasMore ? docs.slice(0, limit) : docs;
+  return { items, nextCursor: hasMore ? encodeCursor(items[items.length - 1]) : null };
+}
+
+function avatarUrlForKey(avatarKey) {
+  return avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${avatarKey}` : null;
+}
+
+// Attach each author's avatar plus the viewer's like/bookmark state to a page of posts.
+// Uses a fixed three queries no matter how many posts are in the page, and Sets for the
+// membership tests so annotating is linear rather than posts x likes.
+async function annotatePosts(posts, viewerId) {
+  if (!posts || posts.length === 0) return [];
+
+  const postIds = posts.map(p => p.id);
+  const authorIds = Array.from(new Set(posts.map(p => p.userId)));
+
+  const [authors, likes, bookmarks] = await Promise.all([
+    db.collection('users')
+      .find({ id: { $in: authorIds } })
+      .project({ id: 1, avatarKey: 1, _id: 0 })
+      .toArray(),
+    viewerId
+      ? db.collection('likes').find({ tweetId: { $in: postIds }, userId: viewerId }).project({ tweetId: 1 }).toArray()
+      : [],
+    viewerId
+      ? db.collection('bookmarks').find({ postId: { $in: postIds }, userId: viewerId }).project({ postId: 1 }).toArray()
+      : [],
+  ]);
+
+  const avatarByAuthor = new Map(authors.map(u => [u.id, avatarUrlForKey(u.avatarKey)]));
+  const likedIds = new Set(likes.map(l => l.tweetId));
+  const bookmarkedIds = new Set(bookmarks.map(b => b.postId));
+
+  return posts.map(p => ({
+    ...p,
+    avatarUrl: avatarByAuthor.get(p.userId) || null,
+    youLiked: likedIds.has(p.id),
+    bookmarked: bookmarkedIds.has(p.id),
+  }));
+}
+
+// The unique indexes declared below mean Mongo can now reject a write with E11000
+// where it previously created a duplicate. Handlers pre-check for conflicts, but a
+// small race window remains between that check and the write, so map the error to a
+// 400 instead of letting it surface as a 500.
+function duplicateKeyField(err) {
+  if (!err || err.code !== 11000) return null;
+  // The driver reports the violated index as keyPattern, e.g. { email: 1 }.
+  const field = err.keyPattern ? Object.keys(err.keyPattern)[0] : null;
+  return field || 'unknown';
+}
+
 let db; // we'll store our database reference here
+
+// Every index the app relies on, declared in one place next to the query it serves so
+// the two can be reviewed together. Without these, each listed query is a full
+// collection scan. createIndex is idempotent, so this is safe to run on every boot.
+//
+// Compound key order follows the ESR rule: Equality fields first, then Sort fields.
+const INDEXES = [
+  // --- users ---
+  {
+    collection: 'users',
+    keys: { id: 1 },
+    options: { unique: true, name: 'uniq_user_id' },
+    serves: 'findOne({ id }) — hit on nearly every authenticated request',
+  },
+  {
+    collection: 'users',
+    keys: { email: 1 },
+    options: { unique: true, name: 'uniq_user_email' },
+    serves: 'login, verify, resend, and the register duplicate check',
+  },
+  {
+    collection: 'users',
+    keys: { username: 1 },
+    options: { unique: true, name: 'uniq_user_username' },
+    serves: 'register $or check and the "username already taken" check',
+  },
+
+  // --- posts ---
+  {
+    collection: 'posts',
+    keys: { id: 1 },
+    options: { unique: true, name: 'uniq_post_id' },
+    serves: 'findOne({ id }) on every like, unlike, comment, bookmark and delete',
+  },
+  {
+    collection: 'posts',
+    keys: { userId: 1, createdAt: -1, _id: -1 },
+    options: { name: 'post_author_recent' },
+    // _id is the third key so keyset pagination's tiebreaker sort stays index-served.
+    // Without it, sort({ createdAt: -1, _id: -1 }) falls back to an in-memory SORT.
+    serves: 'home feed find({ userId: { $in } }).sort({ createdAt: -1, _id: -1 }) and profile feed',
+  },
+
+  // --- comments ---
+  {
+    collection: 'comments',
+    keys: { tweetId: 1, createdAt: -1, _id: -1 },
+    options: { name: 'comment_post_recent' },
+    serves: 'paginated find({ tweetId }).sort({ createdAt: -1, _id: -1 }) and the delete-post cascade',
+  },
+
+  // --- likes ---
+  {
+    collection: 'likes',
+    keys: { tweetId: 1, userId: 1 },
+    options: { unique: true, name: 'uniq_tweet_user' },
+    serves: 'like/unlike upsert, the feed annotation query, and deleteMany({ tweetId })',
+  },
+
+  // --- bookmarks ---
+  {
+    collection: 'bookmarks',
+    keys: { userId: 1, postId: 1 },
+    options: { unique: true, name: 'uniq_user_post_bookmark' },
+    serves: 'bookmark toggle, find({ userId }) listing, and the feed annotation query',
+  },
+  {
+    collection: 'bookmarks',
+    keys: { postId: 1 },
+    options: { name: 'bookmark_post' },
+    serves: 'deleteMany({ postId }) cascade — postId is not a prefix of the unique index',
+  },
+  {
+    collection: 'bookmarks',
+    keys: { userId: 1, createdAt: -1, _id: -1 },
+    options: { name: 'bookmark_user_recent' },
+    serves: 'paginated bookmark listing, most recently saved first',
+  },
+
+  // --- refreshTokens ---
+  {
+    collection: 'refreshTokens',
+    keys: { token: 1 },
+    options: { unique: true, name: 'uniq_refresh_token' },
+    serves: 'findOne({ token }) and updateOne({ token }) on every token refresh',
+  },
+  {
+    collection: 'refreshTokens',
+    keys: { expiresAt: 1 },
+    options: { expireAfterSeconds: 0, name: 'ttl_refresh_expires' },
+    serves: 'TTL cleanup — Mongo deletes each token once expiresAt passes, so the '
+      + 'collection stops growing without bound',
+  },
+];
+
+async function ensureIndexes(db) {
+  let created = 0;
+  let existing = 0;
+  let rebuilt = 0;
+  const failures = [];
+
+  for (const spec of INDEXES) {
+    const { collection, keys, options } = spec;
+    try {
+      const before = await db.collection(collection).indexes().catch(() => []);
+      const present = before.find(ix => ix.name === options.name);
+
+      // If an index of this name exists with different keys, the declaration above has
+      // changed since it was built. Mongo rejects createIndex in that case, so drop and
+      // rebuild to keep this list the single source of truth.
+      if (present && JSON.stringify(present.key) !== JSON.stringify(keys)) {
+        await db.collection(collection).dropIndex(options.name);
+        await db.collection(collection).createIndex(keys, options);
+        rebuilt += 1;
+        console.log(`   ~ rebuilt ${collection}.${options.name} (key spec changed)`);
+        continue;
+      }
+
+      await db.collection(collection).createIndex(keys, options);
+      if (present) {
+        existing += 1;
+      } else {
+        created += 1;
+        console.log(`   + created ${collection}.${options.name}`);
+      }
+    } catch (err) {
+      failures.push(`${collection}.${options.name}: ${err.message}`);
+    }
+  }
+
+  console.log(`✅ Indexes ready (${created} created, ${rebuilt} rebuilt, ${existing} already present${failures.length ? `, ${failures.length} failed` : ''})`);
+  for (const failure of failures) {
+    // Not fatal: the app still works, just with collection scans and without the
+    // uniqueness guarantee. A unique-index failure usually means duplicate data.
+    console.error(`   ! index failed — ${failure}`);
+  }
+}
 
 async function connectDB() {
   try {
@@ -134,20 +418,7 @@ async function connectDB() {
     await client.connect();
     db = client.db(process.env.DB_NAME); // connect to the right DB
     console.log("✅ MongoDB connected");
-    // ensure unique index on likes to prevent duplicate (tweetId, userId) entries
-    try {
-      await db.collection('likes').createIndex({ tweetId: 1, userId: 1 }, { unique: true, name: 'uniq_tweet_user' })
-      console.log('✅ Ensured unique index on likes(tweetId, userId)')
-    } catch (idxErr) {
-      console.warn('Could not create likes index at startup', idxErr)
-    }
-    // ensure bookmarks collection has a unique (userId, postId) index
-    try {
-      await db.collection('bookmarks').createIndex({ userId: 1, postId: 1 }, { unique: true, name: 'uniq_user_post_bookmark' })
-      console.log('✅ Ensured unique index on bookmarks(userId, postId)')
-    } catch (idxErr) {
-      console.warn('Could not create bookmarks index at startup', idxErr)
-    }
+    await ensureIndexes(db);
   } catch (err) {
     console.error("❌ MongoDB connection failed:", err);
     process.exit(1);
@@ -262,19 +533,27 @@ app.post("/auth/register", async (req, res) => {
     if (process.env.NODE_ENV !== 'production') resp.devVerificationCode = verificationCode
     return res.status(201).json(resp)
   } catch (err) {
+    if (duplicateKeyField(err)) {
+      // Lost a race with a concurrent registration for the same email or username.
+      return res
+        .status(400)
+        .json({ message: "User with that email or username already exists" });
+    }
     console.error("Registration error", err);
     return res.status(500).json({ message: "Internal server error" });
   }
 });
 
 async function sendVerificationEmail(email, username, code) {
-  const host = 'smtp.gmail.com'
-  const port = parseInt(process.env.MAILTRAP_PORT || '587', 10)
-  const user = "rajadithyam@gmail.com"
-  const pass = process.env.MAILTRAP_PASS
+  // SMTP_* are the canonical names; the MAILTRAP_* fallbacks keep existing
+  // deployments working until their config vars are renamed.
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com'
+  const port = parseInt(process.env.SMTP_PORT || process.env.MAILTRAP_PORT || '587', 10)
+  const user = process.env.SMTP_USER
+  const pass = process.env.SMTP_PASS || process.env.MAILTRAP_PASS
 
   if (!(host && user && pass)) {
-    console.log('Mailtrap SMTP env vars missing; skipping send')
+    console.warn('SMTP not configured (need SMTP_USER and SMTP_PASS); skipping verification email')
     return
   }
 
@@ -501,44 +780,17 @@ app.post('/api/posts', authenticateToken, async (req, res) => {
 app.get('/api/posts', authenticateToken, async (req, res) => {
     try {
       const userId = req.user.id;
-      const following = await db.collection('users').findOne({ id: userId }, { projection: { following: 1 } });
-      const ids = [...following.following, userId]
-      const posts = await db.collection('posts').find({ userId: { $in: ids } }).sort({ createdAt: -1 }).toArray();
+      const limit = parseLimit(req.query.limit);
+      const cursor = decodeCursor(req.query.cursor);
 
-      const postIds = posts.map(p => p.id)
+      const user = await db.collection('users').findOne({ id: userId }, { projection: { following: 1 } });
+      if (!user) return res.status(401).json({ message: 'User not found' });
+      const ids = [...(user.following || []), userId];
 
-      const userIds = Array.from(new Set(posts.map(p => p.userId)));
-      if (userIds.length > 0) {
-        const users = await db.collection('users')
-          .find({ id: { $in: userIds } })
-          .project({ id: 1, avatarKey: 1, _id: 0 })
-          .toArray();
+      const { items, nextCursor } = await paginatedFind('posts', { userId: { $in: ids } }, { limit, cursor });
+      const posts = await annotatePosts(items, userId);
 
-        const avatarMap = {};
-        users.forEach(u => {
-          avatarMap[u.id] = u && u.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${u.avatarKey}` : null;
-        });
-
-        posts.forEach(p => {
-          p.avatarUrl = avatarMap[p.userId] || null;
-        });
-      }
-      let likedIds = []
-      let bookmarkedIds = []
-      try {
-        if (postIds.length > 0) {
-          const likes = await db.collection('likes').find({ tweetId: { $in: postIds }, userId }).project({ tweetId: 1 }).toArray()
-          likedIds = likes.map(l => l.tweetId)
-          const bookmarks = await db.collection('bookmarks').find({ postId: { $in: postIds }, userId }).project({ postId: 1 }).toArray()
-          bookmarkedIds = bookmarks.map(b => b.postId)
-        }
-      } catch (e) {
-        console.warn('Could not annotate likes/bookmarks for posts', e)
-      }
-
-      const annotated = posts.map(p => ({ ...p, youLiked: likedIds.includes(p.id), bookmarked: bookmarkedIds.includes(p.id) }))
-      
-      return res.status(200).json(annotated);
+      return res.status(200).json({ posts, nextCursor });
     } catch (err) {
       console.error('Error fetching posts', err);
       return res.status(500).json({ message: 'Failed to fetch posts' });
@@ -611,15 +863,15 @@ app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
         if (!post) {
             return res.status(404).json({ message: 'Post not found' });
         }
-        const avatarKey = await db.collection('users').findOne({ id: post.userId }, { projection: { avatarKey: 1, _id: 0 } });
-        if (avatarKey && avatarKey.avatarKey) {
-          post.avatarUrl = `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${avatarKey.avatarKey}`;
-        } else {
-          post.avatarUrl = null;
-        } 
+        const author = await db.collection('users').findOne({ id: post.userId }, { projection: { avatarKey: 1, _id: 0 } });
+        post.avatarUrl = avatarUrlForKey(author && author.avatarKey);
 
-        const comments = await db.collection('comments').find({ tweetId: id }).sort({ createdAt: -1 }).toArray();
-       
+        // Comments are paginated too — a popular post's thread is unbounded otherwise.
+        const commentLimit = parseLimit(req.query.commentLimit);
+        const commentCursor = decodeCursor(req.query.commentCursor);
+        const { items: comments, nextCursor: commentsNextCursor } =
+          await paginatedFind('comments', { tweetId: id }, { limit: commentLimit, cursor: commentCursor });
+
         let youLiked = false
         try {
           const like = await db.collection('likes').findOne({ tweetId: id, userId: req.user.id })
@@ -638,9 +890,8 @@ app.get('/api/postsfeed/:id', authenticateToken, async (req, res) => {
 
         // attach youLiked flag to post object for client convenience
         const postWithFlag = { ...post, youLiked, bookmarked }
-        const data = { post: postWithFlag, comments }
-       
-        return res.status(200).json(data);
+
+        return res.status(200).json({ post: postWithFlag, comments, commentsNextCursor });
     } catch (err) {
         console.error('Error fetching post', err);
         return res.status(500).json({ message: 'Failed to fetch post' });
@@ -729,33 +980,27 @@ app.patch('/api/posts/:id/bookmark', authenticateToken, async (req, res) => {
   }
 });
 
-// List bookmarked posts for current user (optional helper endpoint)
+// List bookmarked posts for current user, most recently saved first
 app.get('/api/bookmarks', authenticateToken, async (req, res) => {
   const userId = req.user.id;
   try {
-    // minimal: get bookmarks -> posts -> bulk users -> attach avatarUrl
-    const bookmarks = await db.collection('bookmarks').find({ userId }).toArray();
+    const limit = parseLimit(req.query.limit);
+    const cursor = decodeCursor(req.query.cursor);
+
+    // Page over the bookmarks themselves, then hydrate that page's posts.
+    const { items: bookmarks, nextCursor } = await paginatedFind('bookmarks', { userId }, { limit, cursor });
+    if (bookmarks.length === 0) return res.status(200).json({ posts: [], nextCursor: null });
+
     const postIds = bookmarks.map(b => b.postId);
-    if (postIds.length === 0) return res.status(200).json({ posts: [] });
+    const found = await db.collection('posts').find({ id: { $in: postIds } }).toArray();
 
-    const posts = await db.collection('posts').find({ id: { $in: postIds } }).toArray();
-    const userIds = Array.from(new Set(posts.map(p => p.userId)));
-    const avatarMap = {};
-    if (userIds.length > 0) {
-      const users = await db.collection('users')
-        .find({ id: { $in: userIds } })
-        .project({ id: 1, avatarKey: 1, _id: 0 })
-        .toArray();
-      users.forEach(u => {
-        avatarMap[u.id] = u && u.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${u.avatarKey}` : null;
-      });
-    }
+    // $in returns documents in index order, not the order of postIds, so restore the
+    // bookmark ordering explicitly. Posts deleted since bookmarking simply drop out.
+    const postById = new Map(found.map(p => [p.id, p]));
+    const ordered = postIds.map(id => postById.get(id)).filter(Boolean);
 
-    posts.forEach(p => {
-      p.avatarUrl = avatarMap[p.userId] || null;
-    });
-
-    return res.status(200).json({ posts });
+    const posts = await annotatePosts(ordered, userId);
+    return res.status(200).json({ posts, nextCursor });
   } catch (err) {
     console.error('Error fetching bookmarks', err);
     return res.status(500).json({ message: 'Failed to fetch bookmarks' });
@@ -764,17 +1009,33 @@ app.get('/api/bookmarks', authenticateToken, async (req, res) => {
 
 app.get('/api/connect', authenticateToken, async (req, res) => {
   try {
-   
     const currentUserId = req.user.id
-    const users = await db.collection('users')
-      .find({ id: { $ne: currentUserId } }, { projection: { id: 1, username: 1, avatarKey: 1, _id: 0 } })
+    const limit = parseLimit(req.query.limit);
+
+    // Users have no meaningful recency for discovery, so page by username instead of
+    // createdAt. It is unique and already indexed, so no tiebreaker is needed and the
+    // cursor is just the last username of the previous page.
+    const after = typeof req.query.cursor === 'string' && req.query.cursor ? req.query.cursor : null;
+    const filter = { id: { $ne: currentUserId } };
+    if (after) filter.username = { $gt: after };
+
+    const found = await db.collection('users')
+      .find(filter, { projection: { id: 1, username: 1, avatarKey: 1, _id: 0 } })
+      .sort({ username: 1 })
+      .limit(limit + 1)
       .toArray();
-    users.forEach(u => {
-      u.avatarUrl = u.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${u.avatarKey}` : null;
-    });
-  
-    const following = await db.collection('users').findOne({ id: currentUserId }, { projection: { following: 1 } });
-    return res.status(200).json({ users, following });
+
+    const hasMore = found.length > limit;
+    const users = (hasMore ? found.slice(0, limit) : found).map(u => ({
+      ...u,
+      avatarUrl: avatarUrlForKey(u.avatarKey),
+    }));
+    const nextCursor = hasMore ? users[users.length - 1].username : null;
+
+    // Send the following list as a plain array — the client checks Array.isArray on it,
+    // so the previous shape ({ _id, following }) never satisfied that fallback.
+    const me = await db.collection('users').findOne({ id: currentUserId }, { projection: { following: 1 } });
+    return res.status(200).json({ users, following: (me && me.following) || [], nextCursor });
   } catch (err) {
     console.error('Error fetching users', err);
     return res.status(500).json({ message: 'Failed to fetch users' });
@@ -845,6 +1106,9 @@ app.patch('/api/users/me', authenticateToken, async (req, res) => {
     const avatarUrl = user && user.avatarKey ? `https://${BUCKET_NAME}.s3.${BUCKET_REGION}.amazonaws.com/${user.avatarKey}` : null;
     return res.status(200).json({ user: { id: user.id, username: user.username, email: user.email, bio: user.bio || null, avatarUrl, following: user.following || [], createdAt: user.createdAt || null } });
   } catch (err) {
+    if (duplicateKeyField(err) === 'username') {
+      return res.status(400).json({ message: 'Username already taken' });
+    }
     console.error('Error updating profile', err);
     return res.status(500).json({ message: 'Failed to update profile' });
   }
@@ -855,20 +1119,13 @@ app.get('/api/users/:id/posts', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
     const viewerId = req.user && req.user.id;
-    const posts = await db.collection('posts').find({ userId: id }).sort({ createdAt: -1 }).toArray();
+    const limit = parseLimit(req.query.limit);
+    const cursor = decodeCursor(req.query.cursor);
 
-    const postIds = posts.map(p => p.id);
-    let likedIds = [];
-    let bookmarkedIds = [];
-    if (postIds.length > 0 && viewerId) {
-      const likes = await db.collection('likes').find({ tweetId: { $in: postIds }, userId: viewerId }).project({ tweetId: 1 }).toArray();
-      likedIds = likes.map(l => l.tweetId);
-      const bookmarks = await db.collection('bookmarks').find({ postId: { $in: postIds }, userId: viewerId }).project({ postId: 1 }).toArray();
-      bookmarkedIds = bookmarks.map(b => b.postId);
-    }
+    const { items, nextCursor } = await paginatedFind('posts', { userId: id }, { limit, cursor });
+    const posts = await annotatePosts(items, viewerId);
 
-    const annotated = posts.map(p => ({ ...p, youLiked: likedIds.includes(p.id), bookmarked: bookmarkedIds.includes(p.id) }));
-    return res.status(200).json({ posts: annotated });
+    return res.status(200).json({ posts, nextCursor });
   } catch (err) {
     console.error('Error fetching user posts', err);
     return res.status(500).json({ message: 'Failed to fetch user posts' });
@@ -906,10 +1163,28 @@ app.delete('/api/posts/:id', authenticateToken, async (req, res) => {
     }
 });
 
+// Describe the Mongo target without ever printing the credential.
+function describeMongoTarget(uri) {
+  try {
+    const u = new URL(String(uri).replace(/^mongodb(\+srv)?:\/\//, 'https://'));
+    return u.hostname;
+  } catch (err) {
+    return '(unparseable MONGODB_URI)';
+  }
+}
+
 connectDB().then(() => {
   app.listen(PORT, () => {
     if (process.env.NODE_ENV !== 'test') {
-      console.log('✅ Connected to Productions');
+      // Print the active profile so it is immediately obvious which database and
+      // origins this process is wired to — the whole point of switchable profiles.
+      console.log('──────────────────────────────────────────────');
+      console.log(`  env file    : ${ENV_FILE}`);
+      console.log(`  NODE_ENV    : ${process.env.NODE_ENV || '(unset)'}`);
+      console.log(`  database    : ${process.env.DB_NAME} @ ${describeMongoTarget(process.env.MONGODB_URI)}`);
+      console.log(`  CORS allow  : ${ALLOWED_ORIGINS.join(', ')}`);
+      console.log(`  SMTP        : ${process.env.SMTP_USER ? `${process.env.SMTP_USER} via ${process.env.SMTP_HOST || 'smtp.gmail.com'}` : '(not configured)'}`);
+      console.log('──────────────────────────────────────────────');
     }
     console.log(`Server running on http://localhost:${PORT}`);
   });

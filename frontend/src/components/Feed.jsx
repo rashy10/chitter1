@@ -1,15 +1,14 @@
 import React from 'react'
 import Post from './Post'
 import { useNavigate } from 'react-router-dom'
-import { useAuth } from '../contexts/AuthContext'
+
 export default function Feed({ posts = [] }) {
 
 
   const navigate = useNavigate()
-  const { currentUser } = useAuth()
+  
   function handleClickPost(id) {  
-    // navigate to post detail route; do not include a literal ':' in the path
-    navigate(`/postfeed/${id}`, { state: { post: posts[id] } })
+    navigate(`/postfeed/${id}`)
 
   }
 

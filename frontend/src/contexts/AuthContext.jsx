@@ -1,9 +1,9 @@
 import React, { createContext, useCallback, useContext, useEffect, useState } from 'react'
 
-// During development Vite proxies /auth -> backend (see vite.config.js).
-// In production, set VITE_BACKEND_BASE to your backend (or it falls back to the Heroku URL).
-const BACKEND_BASE = 'https://chitter-backend-app-4c5e1318fbab.herokuapp.com'
-// const BACKEND_BASE = 'http://localhost:3000'
+// Leave VITE_BACKEND_BASE unset in development: requests then stay relative and Vite
+// proxies /auth and /api to the backend (see vite.config.js), which keeps the
+// refresh-token cookie same-site. In production, set it to the backend's origin.
+const BACKEND_BASE = import.meta.env.VITE_BACKEND_BASE ?? ''
 
 
 function buildUrl(path) {
@@ -28,7 +28,7 @@ export function AuthProvider({ children }) {
     let mounted = true
     ;(async () => {
       try {
-  const res = await fetch(buildUrl('/auth/refresh'), { method: 'POST', credentials: 'include' })
+        const res = await fetch(buildUrl('/auth/refresh'), { method: 'POST', credentials: 'include' })
         if (!res.ok) {
           if (mounted) {
             setUser(null)
@@ -53,8 +53,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const login = useCallback(async (email, password) => {
-    
-  const res = await fetch(buildUrl('/auth/login'), {
+    const res = await fetch(buildUrl('/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -71,8 +70,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const register = useCallback(async (email, username, password) => {
-    console.log(email, username, password);
-  const res = await fetch(buildUrl('/auth/register'), {
+    const res = await fetch(buildUrl('/auth/register'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, username, password }),
@@ -114,7 +112,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     try {
-  await fetch(buildUrl('/auth/logout'), { method: 'POST', credentials: 'include' })
+      await fetch(buildUrl('/auth/logout'), { method: 'POST', credentials: 'include' })
     } catch (err) {
       console.error('Logout failed', err)
     }
@@ -133,7 +131,7 @@ export function AuthProvider({ children }) {
       let res = await fetch(url, merged)
       if (res.status === 401) {
         // try refresh
-  const r = await fetch(buildUrl('/auth/refresh'), { method: 'POST', credentials: 'include' })
+        const r = await fetch(buildUrl('/auth/refresh'), { method: 'POST', credentials: 'include' })
         if (r.ok) {
           const b = await r.json()
           setAccessToken(b.accessToken)
