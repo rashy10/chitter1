@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import Avatar from '../components/Avatar'
 import Post from '../components/Post'
+import LoadMore from '../components/LoadMore'
+import useCursorPages from '../hooks/useCursorPages'
 import './Profile.css'
 
 export default function Profile() {
@@ -11,7 +13,6 @@ export default function Profile() {
   const { user: currentUser, fetchWithAuth, setUser } = useAuth()
 
   const [profile, setProfile] = useState(null)
-  const [posts, setPosts] = useState([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
   const [formUsername, setFormUsername] = useState('')
@@ -19,13 +20,21 @@ export default function Profile() {
   const [avatarFile, setAvatarFile] = useState(null)
   const [avatarUploading, setAvatarUploading] = useState(false)
 
+  // This user's posts, paged newest-first and independent of the profile fetch below —
+  // a slow or failed profile load no longer takes the post list down with it.
+  const {
+    items: posts,
+    nextCursor,
+    loadingMore,
+    loadMore,
+  } = useCursorPages(`/api/users/${id}/posts`)
+
   useEffect(() => {
     let cancelled = false
     async function load() {
       setLoading(true)
       try {
-        // try authenticated fetch first, falls back to unauthenticated if fetchWithAuth isn't available
-        const res = await fetchWithAuth(`/api/users/${id}`, { method: 'GET' }) 
+        const res = await fetchWithAuth(`/api/users/${id}`, { method: 'GET' })
         if (!res.ok) {
           // gracefully handle missing backend endpoints or errors
           const text = await res.text().catch(() => '')
@@ -34,21 +43,6 @@ export default function Profile() {
         const body = await res.json()
         if (cancelled) return
         setProfile(body.user)
-
-        // fetch posts for this user; if endpoint doesn't exist, skip silently
-        try {
-          const res2 = await (fetchWithAuth ? fetchWithAuth(`/api/users/${id}/posts`, { method: 'GET' }) : fetch(`/api/users/${id}/posts`))
-          if (res2.ok) {
-            const b2 = await res2.json()
-            const decorated = (b2.posts || []).map(p => ({ ...p, avatarUrl: body.user?.avatarUrl }))
-            setPosts(decorated)
-          } else {
-           
-            setPosts([])
-          }
-        } catch (e) {
-          setPosts([])
-        }
       } catch (err) {
         console.error('Load profile error', err)
         setProfile(null)
@@ -199,11 +193,13 @@ export default function Profile() {
           {posts.map(p => (
             <li key={p.id} className="profile-post-item">
               <div onClick={() => openPost(p.id)}>
-                <Post post={p} openPost={() => openPost(p.id)} />
+                {/* The endpoint annotates avatarUrl already; the profile is a fallback. */}
+                <Post post={{ ...p, avatarUrl: p.avatarUrl || profile?.avatarUrl }} openPost={() => openPost(p.id)} />
               </div>
             </li>
           ))}
         </ul>
+        <LoadMore nextCursor={nextCursor} loading={loadingMore} onClick={loadMore} />
       </section>
     </div>
   )
