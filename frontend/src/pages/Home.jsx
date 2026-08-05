@@ -11,7 +11,9 @@ import { useAuth } from '../contexts/AuthContext'
 export default function Home() {
   const { user ,fetchWithAuth} = useAuth()
 
-  const [posts, setPosts] = useState()
+  const [posts, setPosts] = useState([])
+  const [nextCursor, setNextCursor] = useState(null)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   async function handleCreate(text,file) {
     
@@ -60,15 +62,21 @@ export default function Home() {
     }
   }
 
-  const fetchPosts = useCallback(async () => {
+  // Pass a cursor to append the next page; omit it to (re)load the first page.
+  const fetchPosts = useCallback(async (cursor = null) => {
     try {
-      const response = await fetchWithAuth('/api/posts',{
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ''
+      const response = await fetchWithAuth(`/api/posts${query}`,{
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       })
       if (response.ok) {
-        const posts = await response.json()
-        setPosts(posts)
+        const data = await response.json()
+        // Paginated backends answer { posts, nextCursor }. The array form is the older
+        // shape — frontend and backend deploy separately, so tolerate both.
+        const page = Array.isArray(data) ? data : (data.posts || [])
+        setPosts(prev => (cursor ? [...prev, ...page] : page))
+        setNextCursor(Array.isArray(data) ? null : (data.nextCursor || null))
       } else {
         console.error('Failed to fetch posts')
       }
@@ -76,6 +84,16 @@ export default function Home() {
       console.error('Fetch posts error', err)
     }
   }, [fetchWithAuth])
+
+  async function handleLoadMore() {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    try {
+      await fetchPosts(nextCursor)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
 
   useEffect(() => {
     fetchPosts()
@@ -90,6 +108,11 @@ export default function Home() {
           <div className="feed-area">
             <Composer onCreate={handleCreate} />
             <Feed posts={posts} />
+            {nextCursor && (
+              <button className="load-more" onClick={handleLoadMore} disabled={loadingMore}>
+                {loadingMore ? 'Loading…' : 'Load more'}
+              </button>
+            )}
           </div>
         </div>
       

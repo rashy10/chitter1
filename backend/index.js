@@ -196,21 +196,35 @@ function decodeCursor(raw) {
 
 // "Strictly older than the cursor", with _id breaking createdAt ties so a page boundary
 // can never drop or repeat a document that shares a timestamp with its neighbour.
-function cursorFilter(cursor) {
-  if (!cursor) return null;
-  return {
-    $or: [
-      { createdAt: { $lt: cursor.createdAt } },
-      { createdAt: cursor.createdAt, _id: { $lt: cursor.id } },
-    ],
-  };
+//
+// Returned as two separate conjuncts rather than one $or, which matters for more than
+// style. The first looks redundant — it is implied by the second — but it is what turns
+// the scan into a seek: as a top-level predicate on the index's second key it lets Mongo
+// derive index bounds of [MinKey, cursor.createdAt] within each userId. Folded into the
+// $or, the planner cannot derive those bounds, and on the $in home feed every per-user
+// IXSCAN restarts from the newest post and discards its way down — making deep pages
+// linear in depth, i.e. exactly the skip() behaviour keyset pagination exists to avoid.
+// Measured on 20k posts: 10023 keys examined at depth 10000 without the bound, 23 with.
+// The single-user profile feed seeks correctly either way; only $in is affected.
+function cursorClauses(cursor) {
+  if (!cursor) return [];
+  return [
+    { createdAt: { $lte: cursor.createdAt } },
+    {
+      $or: [
+        { createdAt: { $lt: cursor.createdAt } },
+        { _id: { $lt: cursor.id } },
+      ],
+    },
+  ];
 }
 
 // Runs a keyset-paginated find and reports whether another page exists. Fetching
 // limit + 1 rows answers that without a second count query.
 async function paginatedFind(collectionName, filter, { limit, cursor }) {
-  const keyset = cursorFilter(cursor);
-  const query = keyset ? { $and: [filter, keyset] } : filter;
+  const clauses = cursorClauses(cursor);
+  // $and-composed so a caller's filter keys can never be clobbered by the keyset's.
+  const query = clauses.length ? { $and: [filter, ...clauses] } : filter;
   const docs = await db.collection(collectionName)
     .find(query)
     .sort({ createdAt: -1, _id: -1 })

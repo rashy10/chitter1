@@ -58,6 +58,9 @@
 .feed-placeholder{ height:160px; background: rgba(255,255,255,0.03); border: 1px dashed var(--border); border-radius:12px; margin-bottom:12px; display:flex; align-items:center; justify-content:center; color:var(--muted) }
 
 .posts-list{ list-style:none;padding:0;margin:0; display:flex; flex-direction:column; gap:10px }
+.load-more{ width:100%; margin-top:12px; padding:10px; border:1px solid var(--border); background:transparent; color:var(--text); border-radius:10px; cursor:pointer }
+.load-more:hover:not(:disabled){ background: rgba(255,255,255,0.04) }
+.load-more:disabled{ color:var(--muted); cursor:default }
 .post-card{ padding:14px; border:1px solid var(--border); background: rgba(255,255,255,0.02); border-radius:12px; transition: transform 0.15s ease, border-color 0.15s ease }
 .post-card:hover{ transform: translateY(-1px); border-color: rgba(255,255,255,0.18) }
 .post-meta{ display:flex; gap:8px; align-items:center; color:var(--muted); font-size:0.9rem }
