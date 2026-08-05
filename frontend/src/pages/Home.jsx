@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React from 'react'
 import './Home.css'
 import LeftNav from '../components/LeftNav'
 import TopBar from '../components/TopBar'
 import Composer from '../components/Composer'
 import Feed from '../components/Feed'
+import LoadMore from '../components/LoadMore'
+import useCursorPages from '../hooks/useCursorPages'
 import { useAuth } from '../contexts/AuthContext'
 
 
@@ -11,7 +13,13 @@ import { useAuth } from '../contexts/AuthContext'
 export default function Home() {
   const { user ,fetchWithAuth} = useAuth()
 
-  const [posts, setPosts] = useState()
+  const {
+    items: posts,
+    nextCursor,
+    loadingMore,
+    loadMore,
+    reload: reloadPosts,
+  } = useCursorPages('/api/posts')
 
   async function handleCreate(text,file) {
     
@@ -51,7 +59,9 @@ export default function Home() {
 
       if (response.ok) {
         await response.json().catch(() => {})
-        fetchPosts()
+        // A new post belongs at the top, so restart from the first page rather than
+        // appending — this also drops any cursor that is now mid-list.
+        reloadPosts()
       } else {
         console.error('Failed to create post')
       }
@@ -59,27 +69,6 @@ export default function Home() {
       console.error('Error creating post', err)
     }
   }
-
-  const fetchPosts = useCallback(async () => {
-    try {
-      const response = await fetchWithAuth('/api/posts',{
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      })
-      if (response.ok) {
-        const posts = await response.json()
-        setPosts(posts)
-      } else {
-        console.error('Failed to fetch posts')
-      }
-    } catch (err) {
-      console.error('Fetch posts error', err)
-    }
-  }, [fetchWithAuth])
-
-  useEffect(() => {
-    fetchPosts()
-  }, [fetchPosts])
 
   return (
     <div>
@@ -90,6 +79,7 @@ export default function Home() {
           <div className="feed-area">
             <Composer onCreate={handleCreate} />
             <Feed posts={posts} />
+            <LoadMore nextCursor={nextCursor} loading={loadingMore} onClick={loadMore} />
           </div>
         </div>
       

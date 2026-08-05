@@ -124,6 +124,13 @@ button{
   color: var(--text);
 }
 
+/* Shared by every paginated list (feed, profile, bookmarks, connect). Colours come
+   from .btn.secondary; this only adds layout. Selectors are .btn-qualified so they
+   outrank .btn.secondary rather than depending on source order. */
+.btn.load-more{ width:100%; margin-top:12px }
+.btn.load-more:hover:not(:disabled){ background: rgba(255,255,255,0.04) }
+.btn.load-more:disabled{ color:var(--muted); cursor:default }
+
 .btn.ghost{
   background: rgba(255,255,255,0.04);
   border: 1px solid var(--border);

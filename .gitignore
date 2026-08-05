@@ -26,6 +26,7 @@ build/
 .venv/
 
 # --- OS / editor cruft ---
+.claude/
 .DS_Store
 **/.DS_Store
 Thumbs.db
